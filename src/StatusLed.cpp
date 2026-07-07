@@ -42,11 +42,11 @@ void IRAM_ATTR sendPixel(uint8_t g, uint8_t r, uint8_t b) {
       const uint32_t hi = (v & 0x80) ? T1H : T0H;
       const uint32_t lo = (v & 0x80) ? T1L : T0L;
       v <<= 1;
-      const uint32_t start = esp_cpu_get_ccount();
+      const uint32_t start = esp_cpu_get_cycle_count();
       REG_WRITE(GPIO_OUT1_W1TS_REG, LED_MASK);                     // drive high
-      while (esp_cpu_get_ccount() - start < hi) {}
+      while (esp_cpu_get_cycle_count() - start < hi) {}
       REG_WRITE(GPIO_OUT1_W1TC_REG, LED_MASK);                     // drive low
-      while (esp_cpu_get_ccount() - start < hi + lo) {}
+      while (esp_cpu_get_cycle_count() - start < hi + lo) {}
     }
   }
   taskEXIT_CRITICAL(&mux);

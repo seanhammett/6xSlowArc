@@ -33,7 +33,7 @@
 #include "InputManager.h"
 #include "SequenceEngine.h"
 #include "StatusLed.h"
-#include "NetworkManager.h"
+#include "NetworkSupervisor.h"
 #include "OtaService.h"
 #include "WebUi.h"
 #include "SystemState.h"
@@ -46,7 +46,7 @@ static MotorController  motors;
 static InputManager     inputs;
 static SequenceEngine   sequence;
 static StatusLed        statusLed;
-static NetworkManager   network;
+static NetworkSupervisor   network;
 static OtaService       ota;
 static WebUi            webUi;
 
@@ -104,20 +104,42 @@ static String buildStateJson() {
   j += (inputs.mode() == Mode::Performance) ? "Performance" : "Gallery";
   j += "\",";
   j += "\"running\":"; j += sequence.running() ? "true" : "false"; j += ',';
+  j += "\"seq_t\":"; j += sequence.positionMs(); j += ',';
 
   const char* wifi = "offline";
   switch (network.status()) {
-    case NetworkManager::Status::Connecting:        wifi = "connecting"; break;
-    case NetworkManager::Status::StationConnected:  wifi = "station";    break;
-    case NetworkManager::Status::AccessPoint:       wifi = "ap";         break;
+    case NetworkSupervisor::Status::Connecting:        wifi = "connecting"; break;
+    case NetworkSupervisor::Status::StationConnected:  wifi = "station";    break;
+    case NetworkSupervisor::Status::AccessPoint:       wifi = "ap";         break;
     default:                                        wifi = "offline";    break;
   }
   j += "\"wifi\":\""; j += wifi; j += "\",";
+  j += "\"ssid\":\""; j += network.ssid(); j += "\",";
   j += "\"ip\":\""; j += network.ipAddress(); j += "\",";
 
   j += "\"fault\":"; j += (int)currentFault(); j += ',';
   j += "\"uptime\":"; j += (millis() / 1000);
   j += '}';
+  return j;
+}
+
+// The choreography table for the web UI's timeline view (fetched once).
+// Values are scales of the set-points (255 = the set-point).
+static String buildSequenceJson() {
+  String j;
+  j.reserve(1024);
+  j += "{\"len\":"; j += sequence.loopLengthMs(); j += ",\"cues\":[";
+  for (uint16_t i = 0; i < sequence.cueCount(); ++i) {
+    const Cue& c = sequence.cues()[i];
+    if (i) j += ',';
+    j += "{\"t\":"; j += c.timeMs;
+    j += ",\"b\":[";
+    for (uint8_t ch = 0; ch < NUM_CHANNELS; ++ch) { if (ch) j += ','; j += c.brightness[ch]; }
+    j += "],\"s\":[";
+    for (uint8_t ch = 0; ch < NUM_CHANNELS; ++ch) { if (ch) j += ','; j += c.speed[ch]; }
+    j += "]}";
+  }
+  j += "]}";
   return j;
 }
 
@@ -164,7 +186,10 @@ void setup() {
     if (wdtSubscribed_) { esp_task_wdt_delete(NULL); wdtSubscribed_ = false; }
   });
 
-  webUi.begin(&model, &configStore, buildStateJson);
+  webUi.begin(&model, &configStore, buildStateJson, buildSequenceJson,
+              [](const String& ssid, const String& pass) {
+                network.setCredentials(ssid, pass);   // NVS + immediate attempt
+              });
 
   watchdogBegin();
 }
@@ -185,7 +210,7 @@ void loop() {
   if (mode == Mode::Performance) {
     if (inputs.sequencePressed()) sequence.toggle();
     if (sequence.running()) {
-      sequence.fill(effBrightness_, effSpeed_);
+      sequence.fill(model.brightness, model.speed, effBrightness_, effSpeed_);
     } else if (!SEQUENCE_STOP_HOLD) {
       for (uint8_t i = 0; i < NUM_CHANNELS; ++i) {
         effBrightness_[i] = model.brightness[i];

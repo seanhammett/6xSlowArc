@@ -41,7 +41,7 @@ static constexpr uint32_t BULB_STAGGER_MS = 45;
 static constexpr uint8_t  BULB_LARGE_STEP = 24;
 
 // ---------------------------------------------------------------------------
-// Motors (TMC2209 in STEP/DIR, driven by FastAccelStepper)
+// Motors (TMC2209 in STEP/DIR, STEP pulses from MCPWM)
 // ---------------------------------------------------------------------------
 // Speed set-point 1..255 maps linearly onto MIN..MAX step rate. 0 = stopped.
 // These are step pulses/second at whatever microstep the TMC2209 MS pins select
@@ -69,6 +69,8 @@ static constexpr uint32_t NVS_SAVE_DEBOUNCE_MS = 1500;
 static constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 15000;  // give up, run offline
 static constexpr uint32_t WIFI_RETRY_INTERVAL_MS  = 30000;  // bounded reconnect
 static constexpr bool     WIFI_AP_FALLBACK = true;          // SoftAP for commissioning
+static constexpr uint32_t WIFI_AP_LINGER_MS = 60000;        // keep AP up this long
+                                                            // after a portal join
 static constexpr char     WIFI_AP_SSID[]   = "SlowArc-Setup";
 static constexpr char     WIFI_AP_PASS[]   = "slowarc123";   // >= 8 chars
 static constexpr char     OTA_HOSTNAME[]   = "slow-arc";

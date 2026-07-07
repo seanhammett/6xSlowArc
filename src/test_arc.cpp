@@ -3,8 +3,8 @@
 // its own MCPWM timer), the DAC boards driven continuously over I2C, AND a basic
 // WiFi web server — to confirm the ESP32-S3 sustains the whole stack at once.
 //
-// Each motor spins at a distinct, steady speed so you can identify and check each
-// one in turn while they all run. It also exercises the front-panel inputs and the
+// Every motor has the same 0..MOTOR_MAX_SPEED_HZ range, individually set from the
+// web page, so you can check each in turn. It also exercises the front-panel inputs and the
 // status LED: the mode switch and sequence button (debounced via the production
 // InputManager) and the on-board + off-board status pixels (production StatusLed).
 // The sequence button steps the LED through every state so you can verify each
@@ -34,15 +34,6 @@
 #include "ChannelModel.h"     // Mode
 #include "StatusLed.h"        // production status-LED driver (on-board + off-board)
 #include "InputManager.h"     // production mode switch + sequence button
-
-// Per-channel speed spread: channel i runs at BASE + i*STEP Hz (clamped to MAX),
-// then scaled by the web slider. Distinct rates make each motor easy to pick out.
-#ifndef TEST_BASE_HZ
-#define TEST_BASE_HZ 300
-#endif
-#ifndef TEST_STEP_HZ
-#define TEST_STEP_HZ 300
-#endif
 
 // STA credentials come from the gitignored src/secrets.h (copy secrets.h.example
 // to secrets.h and fill it in). If that file is absent — e.g. a fresh clone — we
@@ -88,13 +79,12 @@ static DFRobot_GP8403* dac_[3]     = {nullptr, nullptr, nullptr};
 static bool            boardOk_[3] = {false, false, false};
 
 static bool     motorOk_[NUM_CHANNELS]   = {false};
-static uint32_t baseHz_[NUM_CHANNELS]    = {0};   // distinct per-channel rate
 static float    curHz_[NUM_CHANNELS]     = {0};   // ramped actual
 static uint32_t appliedHz_[NUM_CHANNELS] = {0};   // last freq written to MCPWM
 
-static float    speedScale_ = 1.0f;               // 0..1, motor speed (web slider)
-static uint8_t  bulbPct_    = 50;                  // 0..100, bulb level (web slider)
-static uint16_t bulbMv_     = 0;                   // last DAC value (for the page)
+static float    speedScale_[NUM_CHANNELS] = {0};   // 0..1 per arc, motor speed (web sliders)
+static uint8_t  bulbPct_[NUM_CHANNELS]    = {0};   // 0..100 per arc, bulb level (web sliders)
+static uint16_t bulbMv_[NUM_CHANNELS]     = {0};   // last DAC value per arc (for the page)
 static bool     apMode_     = false;               // true if we fell back to SoftAP
 
 // Status LED + front-panel inputs (production classes). The sequence button steps
@@ -135,26 +125,45 @@ static const char kPage[] PROGMEM = R"HTML(
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Slow Arc — test rig</title>
 <style>
- body{font-family:system-ui,sans-serif;background:#15171c;color:#e8e8e8;margin:0;padding:1rem;max-width:560px;margin:auto}
+ body{font-family:system-ui,sans-serif;background:#15171c;color:#e8e8e8;margin:0;padding:1rem;max-width:820px;margin:auto}
  h1{font-size:1.2rem} .card{background:#1e2128;border-radius:8px;padding:.8rem 1rem;margin:.6rem 0}
  .m{display:flex;justify-content:space-between;font-variant-numeric:tabular-nums;padding:.15rem 0}
- input[type=range]{width:100%} output{font-weight:bold;color:#9ad}
+ output{font-weight:bold;color:#9ad}
+ .scroll{overflow-x:auto}
+ .rack{display:flex;gap:1rem;width:max-content;margin:.6rem auto 0;padding:.2rem}
+ .pair{display:flex;flex-direction:column;align-items:center;background:#262a33;border-radius:8px;padding:.6rem .5rem;flex:0 0 auto}
+ .arclbl{font-size:.85rem;color:#9ad;margin-bottom:.5rem;white-space:nowrap}
+ .sls{display:flex;gap:.5rem}
+ .sl{display:flex;flex-direction:column;align-items:center}
+ .sl input[type=range]{writing-mode:vertical-lr;direction:rtl;-webkit-appearance:slider-vertical;width:1.8rem;height:300px;margin:0}
+ .cap{font-size:.72rem;margin-top:.45rem;text-align:center;font-variant-numeric:tabular-nums;white-space:nowrap;color:#bbb}
 </style></head><body>
 <h1>Slow Arc — concurrency test</h1>
 <div class="card">
- <label>Motor speed scale: <output id="sv">100</output>%</label>
- <input type="range" id="sc" min="0" max="100" value="100"
-   oninput="sv.textContent=this.value;fetch('/set?scale='+this.value)">
-</div>
-<div class="card">
- <label>Bulb level: <output id="bv">50</output>%</label>
- <input type="range" id="bl" min="0" max="100" value="50"
-   oninput="bv.textContent=this.value;fetch('/set?bulb='+this.value)">
+ <b>Per-arc controls</b> — motor speed (M) &amp; bulb brightness (B)
+ <div class="scroll"><div class="rack" id="rack"></div></div>
 </div>
 <div class="card" id="io">inputs…</div>
 <div class="card" id="mot">motors…</div>
 <div class="card" id="bulb">bulb…</div>
 <script>
+const rack=document.getElementById('rack');
+const MAXHZ=4000,MINHZ=60;  // mirror MOTOR_MAX/MIN_SPEED_HZ in config.h
+function hz(v){return v?Math.max(MINHZ,Math.round(MAXHZ*v/100)):0}
+function mset(el,i){const p=el.parentNode,v=+el.value;
+ p.querySelector('output').textContent=v;p.querySelector('.hz').textContent=hz(v);
+ fetch('/set?ch='+i+'&scale='+v)}
+function bset(el,i){el.parentNode.querySelector('output').textContent=el.value;
+ fetch('/set?ch='+i+'&bulb='+el.value)}
+for(let i=0;i<6;i++){
+ rack.insertAdjacentHTML('beforeend',
+  `<div class="pair"><div class="arclbl">Arc ${i}</div><div class="sls">`+
+   `<div class="sl"><input type="range" min="0" max="100" value="50" oninput="mset(this,${i})">`+
+     `<div class="cap">M <output>50</output>%<br><span class="hz">${hz(50)}</span> Hz</div></div>`+
+   `<div class="sl"><input type="range" min="0" max="100" value="50" oninput="bset(this,${i})">`+
+     `<div class="cap">B <output>50</output>%</div></div>`+
+  `</div></div>`);
+}
 async function poll(){
  try{const d=await (await fetch('/status')).json();
   document.getElementById('io').innerHTML='<b>Inputs &amp; status LED</b>'+
@@ -165,9 +174,9 @@ async function poll(){
       `border:1px solid #444;background:${d.led_rgb};vertical-align:middle;margin-right:.4rem"></span>`+
       `${d.led}</span></div>`;
   document.getElementById('mot').innerHTML='<b>Motors (Hz)</b>'+
-    d.motors.map((h,i)=>`<div class="m"><span>ch${i}</span><span>${h<0?'fault':h}</span></div>`).join('');
-  document.getElementById('bulb').innerHTML=
-    `<b>Bulbs</b><div class="m"><span>DAC out</span><span>${d.bulb_mv} mV</span></div>`+
+    d.motors.map((h,i)=>`<div class="m"><span>arc${i}</span><span>${h<0?'fault':h}</span></div>`).join('');
+  document.getElementById('bulb').innerHTML='<b>Bulbs (mV)</b>'+
+    d.bulb_mv.map((mv,i)=>`<div class="m"><span>arc${i}</span><span>${mv}</span></div>`).join('')+
     `<div class="m"><span>Boards</span><span>${d.boards.join(' ')||'none'}</span></div>`;
  }catch(e){}
 }
@@ -178,11 +187,17 @@ setInterval(poll,1000); poll();
 static void handleRoot()   { server.send_P(200, "text/html", kPage); }
 
 static void handleStatus() {
-  String j = "{\"scale\":";
-  j += (int)lroundf(speedScale_ * 100);
-  j += ",\"bulb_mv\":";
-  j += bulbMv_;
-  j += ",\"motors\":[";
+  String j = "{\"scales\":[";
+  for (uint8_t ch = 0; ch < NUM_CHANNELS; ++ch) {
+    if (ch) j += ',';
+    j += (int)lroundf(speedScale_[ch] * 100);
+  }
+  j += "],\"bulb_mv\":[";
+  for (uint8_t ch = 0; ch < NUM_CHANNELS; ++ch) {
+    if (ch) j += ',';
+    j += bulbMv_[ch];
+  }
+  j += "],\"motors\":[";
   for (uint8_t ch = 0; ch < NUM_CHANNELS; ++ch) {
     if (ch) j += ',';
     j += motorOk_[ch] ? (long)appliedHz_[ch] : -1;   // -1 => fault
@@ -209,15 +224,20 @@ static void handleStatus() {
 }
 
 static void handleSet() {
+  int ch = server.hasArg("ch") ? server.arg("ch").toInt() : -1;
+  if (ch < 0 || ch >= NUM_CHANNELS) {
+    server.send(400, "application/json", "{\"ok\":false}");
+    return;
+  }
   if (server.hasArg("scale")) {
     int v = server.arg("scale").toInt();
     if (v < 0) v = 0; if (v > 100) v = 100;
-    speedScale_ = v / 100.0f;
+    speedScale_[ch] = v / 100.0f;
   }
   if (server.hasArg("bulb")) {
     int v = server.arg("bulb").toInt();
     if (v < 0) v = 0; if (v > 100) v = 100;
-    bulbPct_ = (uint8_t)v;
+    bulbPct_[ch] = (uint8_t)v;
   }
   server.send(200, "application/json", "{\"ok\":true}");
 }
@@ -227,6 +247,12 @@ void setup() {
   Serial.begin(115200);
   delay(400);
   Serial.println("\n=== ALL 6 motors + DACs + web + LED/inputs test ===");
+
+  // Per-arc slider defaults (match the web page's initial values).
+  for (uint8_t ch = 0; ch < NUM_CHANNELS; ++ch) {
+    speedScale_[ch] = 0.5f;   // 50% of MOTOR_MAX_SPEED_HZ
+    bulbPct_[ch]    = 50;     // 50% bulb brightness
+  }
 
   // --- Front-panel inputs + status LED (on-board + off-board) ---
   inputs.begin();
@@ -269,18 +295,15 @@ void setup() {
     if (!motorOk_[ch]) { Serial.printf("[mot] ch%u MCPWM init FAILED\n", ch); continue; }
 
     mcpwm_set_signal_low(unitOf(ch), timerOf(ch), MCPWM_GEN_A);
-    uint32_t hz = TEST_BASE_HZ + (uint32_t)ch * TEST_STEP_HZ;
-    if (hz > MOTOR_MAX_SPEED_HZ) hz = MOTOR_MAX_SPEED_HZ;
-    baseHz_[ch] = hz;
   }
 
-  Serial.println("[mot] target speeds (each motor a distinct rate):");
+  Serial.printf("[mot] all channels 0..%lu Hz (web sliders):\n",
+                (unsigned long)MOTOR_MAX_SPEED_HZ);
   for (uint8_t ch = 0; ch < NUM_CHANNELS; ++ch) {
     if (!motorOk_[ch]) continue;
     digitalWrite(PIN_EN[ch], LOW);
-    Serial.printf("[mot]   ch%u  STEP=%u  unit %d/timer %d  -> %lu Hz\n",
-                  ch, PIN_STEP[ch], (int)unitOf(ch), (int)timerOf(ch),
-                  (unsigned long)baseHz_[ch]);
+    Serial.printf("[mot]   ch%u  STEP=%u  unit %d/timer %d\n",
+                  ch, PIN_STEP[ch], (int)unitOf(ch), (int)timerOf(ch));
   }
 
   // --- WiFi: join the configured network, else fall back to a SoftAP ---
@@ -340,11 +363,13 @@ void loop() {
   uint32_t dt = now - lastCtrl;
   lastCtrl = now;
 
-  // --- Bulbs: drive every present DAC channel to the web-set level (written
-  // every tick, so the I2C bus stays exercised even when the level is steady) ---
-  bulbMv_ = (uint16_t)lroundf((float)bulbPct_ / 100.0f * DAC_FULLSCALE_MV);
-  for (uint8_t b = 0; b < 3; ++b) {
-    if (boardOk_[b]) dac_[b]->setDACOutVoltage(bulbMv_, 2);
+  // --- Bulbs: drive every present DAC channel to its own web-set level (written
+  // every tick, so the I2C bus stays exercised even when the level is steady).
+  // Arc i -> board i/2, DAC channel i%2 (two bulbs per GP8403 board). ---
+  for (uint8_t i = 0; i < NUM_CHANNELS; ++i) {
+    bulbMv_[i] = (uint16_t)lroundf((float)bulbPct_[i] / 100.0f * DAC_FULLSCALE_MV);
+    uint8_t b = i / 2, c = i % 2;
+    if (boardOk_[b]) dac_[b]->setDACOutVoltage(bulbMv_[i], c);
   }
 
   // --- Motors: ramp each channel toward its (scaled) distinct target ---
@@ -352,9 +377,9 @@ void loop() {
   for (uint8_t ch = 0; ch < NUM_CHANNELS; ++ch) {
     if (!motorOk_[ch]) continue;
 
-    // Effective target = distinct base rate scaled by the web slider. Below MIN we
+    // Effective target = MAX scaled by this arc's web slider. Below MIN we
     // stop rather than emit an unusable sub-MIN frequency.
-    uint32_t tgt = (uint32_t)lroundf((float)baseHz_[ch] * speedScale_);
+    uint32_t tgt = (uint32_t)lroundf((float)MOTOR_MAX_SPEED_HZ * speedScale_[ch]);
     if (tgt != 0 && tgt < MOTOR_MIN_SPEED_HZ) tgt = MOTOR_MIN_SPEED_HZ;
 
     float cur = curHz_[ch];
@@ -383,15 +408,18 @@ void loop() {
   // --- Console status line ---
   if (now - lastPrint >= kPrintMs) {
     lastPrint = now;
-    Serial.printf("[run] scale=%3d%% motors Hz:", (int)lroundf(speedScale_ * 100));
+    // One compact line: motor Hz | bulb mV | mode/seq/LED | link.
+    Serial.printf("M");
     for (uint8_t ch = 0; ch < NUM_CHANNELS; ++ch) {
-      if (motorOk_[ch]) Serial.printf(" ch%u=%4lu", ch, (unsigned long)appliedHz_[ch]);
-      else              Serial.printf(" ch%u=----", ch);
+      if (motorOk_[ch]) Serial.printf(" %4lu", (unsigned long)appliedHz_[ch]);
+      else              Serial.printf("    -");
     }
-    if (apMode_) Serial.printf("  | bulbs=%4u mV  ap-clients=%d\n", bulbMv_, WiFi.softAPgetStationNum());
-    else         Serial.printf("  | bulbs=%4u mV  rssi=%d dBm\n",    bulbMv_, WiFi.RSSI());
-    Serial.printf("[io ] mode=%-11s seq=%lu  led=%s\n",
-                  mode_ == Mode::Performance ? "Performance" : "Gallery",
+    Serial.printf(" | B");
+    for (uint8_t ch = 0; ch < NUM_CHANNELS; ++ch) Serial.printf(" %5u", bulbMv_[ch]);
+    Serial.printf(" | %s seq=%lu %s",
+                  mode_ == Mode::Performance ? "Perf" : "Gal",
                   (unsigned long)seqCount_, kLedCycle[ledIdx_].name);
+    if (apMode_) Serial.printf(" | ap=%d\n",   WiFi.softAPgetStationNum());
+    else         Serial.printf(" | rssi=%d\n", WiFi.RSSI());
   }
 }

@@ -3,48 +3,6 @@
 #include <Arduino.h>
 
 namespace {
-// -------------------------------------------------------------------------
-// CHOREOGRAPHY — from "Sequence - Sheet1 (1).csv" (rise 4 s, hold 56 s).
-//
-// The arcs wake one at a time: each RISES over 4 s, then everything HOLDS for
-// 56 s before the next change; after all six are on they fall away one at a
-// time the same way, and the loop closes at 668 s. Each step is therefore a
-// pair of rows: the ramp target, then the same frame again at +56 s (the hold).
-// Values are the SCALE applied to each channel's stored set-point: F (255) =
-// the set-point itself (the CSV's "80%" rows), 0 = off. Times are ms from
-// start. Keep the table sorted by timeMs.
-// -------------------------------------------------------------------------
-constexpr uint8_t F = 255;
-const Cue kSequenceCues[] = {
-  //  t(ms)     bulb scale [0..5]     motor scale [0..5]
-  {       0, { 0, 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0, 0 } },
-  {    4000, { F, 0, 0, 0, 0, 0 }, { F, 0, 0, 0, 0, 0 } },   // arc 1 rises
-  {   60000, { F, 0, 0, 0, 0, 0 }, { F, 0, 0, 0, 0, 0 } },   //   hold
-  {   64000, { F, F, 0, 0, 0, 0 }, { F, F, 0, 0, 0, 0 } },   // arc 2 rises
-  {  120000, { F, F, 0, 0, 0, 0 }, { F, F, 0, 0, 0, 0 } },   //   hold
-  {  124000, { F, F, F, 0, 0, 0 }, { F, F, F, 0, 0, 0 } },   // arc 3 rises
-  {  180000, { F, F, F, 0, 0, 0 }, { F, F, F, 0, 0, 0 } },   //   hold
-  {  184000, { F, F, F, F, 0, 0 }, { F, F, F, F, 0, 0 } },   // arc 4 rises
-  {  240000, { F, F, F, F, 0, 0 }, { F, F, F, F, 0, 0 } },   //   hold
-  {  244000, { F, F, F, F, F, 0 }, { F, F, F, F, F, 0 } },   // arc 5 rises
-  {  300000, { F, F, F, F, F, 0 }, { F, F, F, F, F, 0 } },   //   hold
-  {  304000, { F, F, F, F, F, F }, { F, F, F, F, F, F } },   // arc 6 rises — all on
-  {  360000, { F, F, F, F, F, F }, { F, F, F, F, F, F } },   //   hold
-  {  364000, { 0, F, F, F, F, F }, { 0, F, F, F, F, F } },   // arc 1 falls
-  {  420000, { 0, F, F, F, F, F }, { 0, F, F, F, F, F } },   //   hold
-  {  424000, { 0, 0, F, F, F, F }, { 0, 0, F, F, F, F } },   // arc 2 falls
-  {  480000, { 0, 0, F, F, F, F }, { 0, 0, F, F, F, F } },   //   hold
-  {  484000, { 0, 0, 0, F, F, F }, { 0, 0, 0, F, F, F } },   // arc 3 falls
-  {  540000, { 0, 0, 0, F, F, F }, { 0, 0, 0, F, F, F } },   //   hold
-  {  544000, { 0, 0, 0, 0, F, F }, { 0, 0, 0, 0, F, F } },   // arc 4 falls
-  {  600000, { 0, 0, 0, 0, F, F }, { 0, 0, 0, 0, F, F } },   //   hold
-  {  604000, { 0, 0, 0, 0, 0, F }, { 0, 0, 0, 0, 0, F } },   // arc 5 falls
-  {  660000, { 0, 0, 0, 0, 0, F }, { 0, 0, 0, 0, 0, F } },   //   hold
-  {  664000, { 0, 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0, 0 } },   // arc 6 falls — all dark
-  {  668000, { 0, 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0, 0 } },   // END: closes the loop
-};
-constexpr uint16_t kSequenceCount = sizeof(kSequenceCues) / sizeof(kSequenceCues[0]);
-
 uint8_t lerp8(uint8_t a, uint8_t b, uint32_t num, uint32_t den) {
   if (den == 0) return a;
   int32_t d = (int32_t)b - (int32_t)a;
@@ -58,18 +16,62 @@ inline uint8_t scale8(uint8_t value, uint8_t scale) {
 }  // namespace
 
 void SequenceEngine::begin() {
-  cues_  = kSequenceCues;
-  count_ = kSequenceCount;
+  // No choreography yet — main applies the active stored sequence right after
+  // (SequenceStore seeds NVS with the built-in piece on first boot).
 }
 
-void SequenceEngine::load(const Cue* cues, uint16_t count) {
-  if (cues && count >= 1) {
-    cues_  = cues;
-    count_ = count;
+// Expand steps + shared ramp into the cue table. Each step contributes a
+// hold-until cue at (t - ramp) with the previous state and a target cue at t;
+// t=0 carries the last step's state so the loop is seamless, and the loop
+// closes at lastT + ramp (the CSV's END row).
+void SequenceEngine::expand(const SeqDef& def) {
+  uint16_t n = 0;
+  auto put = [&](uint32_t t, uint8_t mask) {
+    if (n && buf_[n - 1].timeMs == t) --n;         // same-time dup: overwrite
+    Cue& c = buf_[n++];
+    c.timeMs = t;
+    for (uint8_t ch = 0; ch < NUM_CHANNELS; ++ch) {
+      uint8_t v = (mask >> ch) & 1 ? 255 : 0;      // bulb + motor move together
+      c.brightness[ch] = v;
+      c.speed[ch]      = v;
+    }
+  };
+
+  if (def.stepCount == 0) { cues_ = nullptr; count_ = 0; return; }
+
+  uint8_t  lastMask = def.steps[def.stepCount - 1].mask;
+  uint8_t  prevMask = lastMask;
+  uint32_t prevT    = 0;
+  put(0, lastMask);                                // loop-seamless start state
+  for (uint8_t i = 0; i < def.stepCount; ++i) {
+    const SeqStep& s = def.steps[i];
+    uint32_t hold = (s.timeMs > def.rampMs) ? s.timeMs - def.rampMs : 0;
+    if (hold < prevT) hold = prevT;                // ramp squeezed by close steps
+    put(hold, prevMask);
+    put(s.timeMs, s.mask);
+    prevMask = s.mask;
+    prevT    = s.timeMs;
+  }
+  put(prevT + def.rampMs, lastMask);               // END: closes the loop
+
+  cues_  = buf_;
+  count_ = n;
+}
+
+void SequenceEngine::apply(const SeqDef& def) {
+  if (running_) {                                  // takes effect on next start()
+    queued_    = def;
+    hasQueued_ = true;
+  } else {
+    expand(def);
   }
 }
 
 void SequenceEngine::start() {
+  if (hasQueued_) {
+    expand(queued_);
+    hasQueued_ = false;
+  }
   running_ = true;
   startMs_ = millis();
 }

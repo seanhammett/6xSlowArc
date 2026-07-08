@@ -12,9 +12,12 @@
 // only decides WHEN each arc moves; HOW BRIGHT/FAST it goes stays with the
 // per-channel set-points, so re-commissioning retunes the piece automatically.
 //
-// The choreography table lives in SequenceEngine.cpp (kSequenceCues). To change
-// the piece, edit that table (or call load()); nothing else changes. This is
-// deliberately the only thing that needs editing.
+// Choreographies arrive as a SeqDef — an artist-editable list of steps ("at
+// time T these arcs are on", bulb + motor together) with one shared ramp —
+// created on the web UI's Sequences tab and persisted by SequenceStore.
+// apply() expands the steps into the internal cue table: each step becomes a
+// hold-until (T - ramp) cue plus a target cue at T, and the loop closes at
+// lastT + ramp back to the t=0 state.
 //
 // Output: while running, fill() scales the set-points by the interpolated frame
 // into the caller's effective brightness/speed arrays, which then feed the
@@ -33,13 +36,27 @@ struct Cue {
   uint8_t  speed[NUM_CHANNELS];         // scale of the motor set-point (255 = set-point)
 };
 
+// One step of an artist-editable sequence: the state to be fully reached at
+// timeMs. Bulb and motor always move together, so an arc is a single bit.
+struct SeqStep {
+  uint32_t timeMs;                      // when the new state is fully reached
+  uint8_t  mask;                        // bit i = arc i on
+};
+
+struct SeqDef {
+  char     name[24];                    // NUL-terminated display name
+  uint32_t rampMs;                      // shared rise/fall time for every change
+  uint8_t  stepCount;
+  SeqStep  steps[SEQ_MAX_STEPS];        // sorted by timeMs
+};
+
 class SequenceEngine {
  public:
   void begin();
 
-  // Provide a custom timeline (must be sorted by timeMs, count >= 1). If never
-  // called, the built-in placeholder is used.
-  void load(const Cue* cues, uint16_t count);
+  // Make def the choreography: immediately when stopped; while running it is
+  // queued and takes effect at the next start() ("plays on the next push").
+  void apply(const SeqDef& def);
 
   void start();                         // (re)start playback from t=0
   void stop();                          // stop; behaviour per SEQUENCE_STOP_HOLD
@@ -62,8 +79,15 @@ class SequenceEngine {
   uint32_t   positionMs() const;        // ms into the loop; 0 when stopped
 
  private:
+  void expand(const SeqDef& def);      // steps + ramp -> cue table in buf_
+
+  // Expanded cue table: per step a hold cue + a target cue, plus the t=0 and
+  // loop-closing entries.
+  Cue        buf_[2 * SEQ_MAX_STEPS + 2];
   const Cue* cues_  = nullptr;
   uint16_t   count_ = 0;
   bool       running_ = false;
   uint32_t   startMs_ = 0;
+  SeqDef     queued_;                  // applied at next start() when running
+  bool       hasQueued_ = false;
 };

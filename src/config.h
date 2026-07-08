@@ -82,6 +82,10 @@ static constexpr char     OTA_HOSTNAME[]   = "slow-arc";
 //                   false = snap back to the static gallery set-points.
 static constexpr bool SEQUENCE_STOP_HOLD = true;
 
+// Artist-editable sequences (web UI "Sequences" tab, persisted to NVS).
+static constexpr uint8_t SEQ_MAX_STEPS = 32;   // steps per sequence
+static constexpr uint8_t SEQ_SLOTS     = 8;    // stored sequence slots
+
 // ---------------------------------------------------------------------------
 // Watchdog
 // ---------------------------------------------------------------------------

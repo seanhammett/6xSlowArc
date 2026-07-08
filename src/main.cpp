@@ -32,6 +32,7 @@
 #include "MotorController.h"
 #include "InputManager.h"
 #include "SequenceEngine.h"
+#include "SequenceStore.h"
 #include "StatusLed.h"
 #include "NetworkSupervisor.h"
 #include "OtaService.h"
@@ -45,6 +46,7 @@ static BulbController   bulbs;
 static MotorController  motors;
 static InputManager     inputs;
 static SequenceEngine   sequence;
+static SequenceStore    seqStore;
 static StatusLed        statusLed;
 static NetworkSupervisor   network;
 static OtaService       ota;
@@ -60,6 +62,10 @@ static bool     wdtSubscribed_ = false;
 // these track the static set-points; in Performance they come from the sequence.
 static uint8_t effBrightness_[NUM_CHANNELS];
 static uint8_t effSpeed_[NUM_CHANNELS];
+
+// Per-arc web kill switches. Runtime only — never persisted, boots all-on. A
+// disabled arc is forced dark/stopped whatever the mode; set-points are untouched.
+static bool arcOn_[NUM_CHANNELS] = { true, true, true, true, true, true };
 
 // -------------------------------------------------------------------------
 // Watchdog. A hang resets the chip; the EN pull-ups then hold the motors
@@ -100,6 +106,10 @@ static String buildStateJson() {
   for (uint8_t i = 0; i < NUM_CHANNELS; ++i) { if (i) j += ','; j += model.speed[i]; }
   j += "],";
 
+  j += "\"on\":[";
+  for (uint8_t i = 0; i < NUM_CHANNELS; ++i) { if (i) j += ','; j += arcOn_[i] ? 1 : 0; }
+  j += "],";
+
   j += "\"mode\":\"";
   j += (inputs.mode() == Mode::Performance) ? "Performance" : "Gallery";
   j += "\",";
@@ -121,6 +131,13 @@ static String buildStateJson() {
   j += "\"uptime\":"; j += (millis() / 1000);
   j += '}';
   return j;
+}
+
+// Hand a stored sequence to the engine: live when stopped, or queued for the
+// next button push while running. Fired by the web UI on select/save-active.
+static void onSequenceActivated(uint8_t slot) {
+  SeqDef def;
+  if (seqStore.load(slot, def)) sequence.apply(def);
 }
 
 // The choreography table for the web UI's timeline view (fetched once).
@@ -171,6 +188,8 @@ void setup() {
   if (!motors.begin()) hwFault_ = Fault::Motor;   // motor fault outranks bulb here
 
   sequence.begin();
+  seqStore.begin();                           // seeds the built-in piece on first boot
+  onSequenceActivated(seqStore.activeIndex());  // arm the engine with the active one
 
   // Seed effective targets from the restored set-points so the soft-start ramps
   // straight to the commissioned values.
@@ -186,10 +205,11 @@ void setup() {
     if (wdtSubscribed_) { esp_task_wdt_delete(NULL); wdtSubscribed_ = false; }
   });
 
-  webUi.begin(&model, &configStore, buildStateJson, buildSequenceJson,
+  webUi.begin(&model, &configStore, &seqStore, arcOn_, buildStateJson, buildSequenceJson,
               [](const String& ssid, const String& pass) {
                 network.setCredentials(ssid, pass);   // NVS + immediate attempt
-              });
+              },
+              onSequenceActivated);
 
   watchdogBegin();
 }
@@ -226,9 +246,18 @@ void loop() {
     }
   }
 
+  // Per-arc kill switches: force disabled arcs dark/stopped whatever the mode
+  // decided; the controllers' ramps make the transition gentle. Masked into
+  // copies so the held eff frame survives an off/on cycle (SEQUENCE_STOP_HOLD).
+  uint8_t outBrightness[NUM_CHANNELS], outSpeed[NUM_CHANNELS];
+  for (uint8_t i = 0; i < NUM_CHANNELS; ++i) {
+    outBrightness[i] = arcOn_[i] ? effBrightness_[i] : 0;
+    outSpeed[i]      = arcOn_[i] ? effSpeed_[i]      : 0;
+  }
+
   // Push targets and pump the ramps.
-  bulbs.setTargets(effBrightness_);
-  motors.setTargets(effSpeed_);
+  bulbs.setTargets(outBrightness);
+  motors.setTargets(outSpeed);
   bulbs.update();
   motors.update();
 

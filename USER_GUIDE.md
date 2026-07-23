@@ -107,12 +107,11 @@ is worth mentioning but not urgent.
 
 ## 6. The Control tab
 
-![The Control tab](docs/img/ui-control.png)
-
 The top strip is the box's status at a glance: healthy or faulty, which mode, whether a
 sequence is running, the WiFi, and how long it has been on.
 
-Below it, one column per arc:
+Below it, one column per arc. **Note that these values should not be adjusted except on 
+explicit instructions from Conrad or his team.**
 
 - The **blue slider (M)** is motor speed, 0–100.
 - The **yellow slider (B)** is bulb brightness, 0–100.
@@ -126,6 +125,8 @@ Changes take effect as you drag, and save themselves a second or two later. Ther
 save button and nothing to confirm.
 
 Set 0 for a slider to turn that half off: brightness 0 is dark, speed 0 is stopped.
+
+![The Control tab](docs/img/ui-control.png)
 
 ---
 

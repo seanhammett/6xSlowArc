@@ -1,6 +1,7 @@
 #include "SequenceEngine.h"
 
 #include <Arduino.h>
+#include <string.h>
 
 namespace {
 uint8_t lerp8(uint8_t a, uint8_t b, uint32_t num, uint32_t den) {
@@ -12,6 +13,11 @@ uint8_t lerp8(uint8_t a, uint8_t b, uint32_t num, uint32_t den) {
 // value * scale / 255, rounded.
 inline uint8_t scale8(uint8_t value, uint8_t scale) {
   return (uint8_t)(((uint16_t)value * scale + 127) / 255);
+}
+
+// The same scaling for a step rate, which is Hz and needs the wider intermediate.
+inline uint16_t scaleHz(uint16_t hz, uint8_t scale) {
+  return (uint16_t)(((uint32_t)hz * scale + 127) / 255);
 }
 }  // namespace
 
@@ -26,6 +32,7 @@ void SequenceEngine::begin() {
 // closes at lastT + ramp (the CSV's END row).
 void SequenceEngine::expand(const SeqDef& def) {
   uint16_t n = 0;
+  strlcpy(name_, def.name, sizeof(name_));         // what the cue table now is
   auto put = [&](uint32_t t, uint8_t mask) {
     if (n && buf_[n - 1].timeMs == t) --n;         // same-time dup: overwrite
     Cue& c = buf_[n++];
@@ -89,10 +96,10 @@ uint32_t SequenceEngine::positionMs() const {
   return loopLen ? (millis() - startMs_) % loopLen : 0;
 }
 
-bool SequenceEngine::fill(const uint8_t setBrightness[NUM_CHANNELS],
-                          const uint8_t setSpeed[NUM_CHANNELS],
-                          uint8_t outBrightness[NUM_CHANNELS],
-                          uint8_t outSpeed[NUM_CHANNELS]) {
+bool SequenceEngine::fill(const uint8_t  setBrightness[NUM_CHANNELS],
+                          const uint16_t setSpeedHz[NUM_CHANNELS],
+                          uint8_t  outBrightness[NUM_CHANNELS],
+                          uint16_t outSpeedHz[NUM_CHANNELS]) {
   if (!running_ || !cues_ || count_ == 0) return false;
 
   uint32_t t = positionMs();
@@ -111,8 +118,8 @@ bool SequenceEngine::fill(const uint8_t setBrightness[NUM_CHANNELS],
     // Interpolate the cue SCALE, then apply it to the commissioned set-point.
     uint8_t bs = lerp8(cues_[a].brightness[ch], cues_[b].brightness[ch], num, den);
     uint8_t ss = lerp8(cues_[a].speed[ch],      cues_[b].speed[ch],      num, den);
-    outBrightness[ch] = scale8(setBrightness[ch], bs);
-    outSpeed[ch]      = scale8(setSpeed[ch],      ss);
+    outBrightness[ch] = scale8(setBrightness[ch],  bs);
+    outSpeedHz[ch]    = scaleHz(setSpeedHz[ch],    ss);
   }
   return true;
 }

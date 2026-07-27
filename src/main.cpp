@@ -16,9 +16,10 @@
 // configuration — the network is only needed to change settings or do OTA.
 //
 // STATUS-LED CODES (spec §7): solid amber = boot/soft-start; slow green pulse =
-// gallery healthy; slow blue pulse = performance running; amber pulse = WiFi
-// connecting; fast blue pulse = OTA; red blink = fault, blink count encodes the
-// subsystem (2 = bulb/DAC, 3 = motor, 4 = supply/brownout).
+// gallery healthy; fast blue blink = performance armed; slow blue pulse =
+// performance running; amber pulse = WiFi connecting; fast blue pulse = OTA;
+// red blink = fault, blink count encodes the subsystem (2 = bulb/DAC, 3 =
+// motor, 4 = supply/brownout).
 //
 
 #include <Arduino.h>
@@ -60,8 +61,8 @@ static bool     wdtSubscribed_ = false;
 
 // Effective per-channel targets actually pushed to the controllers. In Gallery
 // these track the static set-points; in Performance they come from the sequence.
-static uint8_t effBrightness_[NUM_CHANNELS];
-static uint8_t effSpeed_[NUM_CHANNELS];
+static uint8_t  effBrightness_[NUM_CHANNELS];
+static uint16_t effSpeedHz_[NUM_CHANNELS];
 
 // Per-arc web kill switches. Runtime only — never persisted, boots all-on. A
 // disabled arc is forced dark/stopped whatever the mode; set-points are untouched.
@@ -94,6 +95,18 @@ static Fault currentFault() {
   return Fault::None;
 }
 
+// Quote a string for JSON. Sequence names and SSIDs are operator-supplied, and
+// one stray quote would break the whole snapshot — which the page can only
+// report as "offline".
+static String jsonEscape(const char* s) {
+  String o;
+  for (; *s; ++s) {
+    if (*s == '"' || *s == '\\') o += '\\';
+    o += *s;
+  }
+  return o;
+}
+
 // JSON snapshot for the web UI. Assembled here because only main sees it all.
 static String buildStateJson() {
   String j;
@@ -102,8 +115,8 @@ static String buildStateJson() {
 
   j += "\"brightness\":[";
   for (uint8_t i = 0; i < NUM_CHANNELS; ++i) { if (i) j += ','; j += model.brightness[i]; }
-  j += "],\"speed\":[";
-  for (uint8_t i = 0; i < NUM_CHANNELS; ++i) { if (i) j += ','; j += model.speed[i]; }
+  j += "],\"speed\":[";                       // step rate in Hz, not a 0..255 scale
+  for (uint8_t i = 0; i < NUM_CHANNELS; ++i) { if (i) j += ','; j += model.speedHz[i]; }
   j += "],";
 
   j += "\"on\":[";
@@ -115,6 +128,11 @@ static String buildStateJson() {
   j += "\",";
   j += "\"running\":"; j += sequence.running() ? "true" : "false"; j += ',';
   j += "\"seq_t\":"; j += sequence.positionMs(); j += ',';
+  // Which piece is loaded, and which one is waiting for the next button push.
+  // The UI names the timeline from these and refetches the cue table whenever
+  // seq_name changes, so a selection made on another phone still shows up.
+  j += "\"seq_name\":\""; j += jsonEscape(sequence.name()); j += "\",";
+  j += "\"seq_queued\":\""; j += jsonEscape(sequence.queuedName()); j += "\",";
 
   const char* wifi = "offline";
   switch (network.status()) {
@@ -124,8 +142,16 @@ static String buildStateJson() {
     default:                                        wifi = "offline";    break;
   }
   j += "\"wifi\":\""; j += wifi; j += "\",";
-  j += "\"ssid\":\""; j += network.ssid(); j += "\",";
+  j += "\"ssid\":\""; j += jsonEscape(network.ssid().c_str()); j += "\",";
   j += "\"ip\":\""; j += network.ipAddress(); j += "\",";
+  // mDNS name for the status line, so the box is findable without noting its
+  // DHCP address. It only routes on the house network (mDNS comes up with the
+  // OTA service), so report it empty unless we're a station.
+  j += "\"host\":\"";
+  if (network.status() == NetworkSupervisor::Status::StationConnected) {
+    j += OTA_HOSTNAME; j += ".local";
+  }
+  j += "\",";
 
   j += "\"fault\":"; j += (int)currentFault(); j += ',';
   j += "\"uptime\":"; j += (millis() / 1000);
@@ -195,7 +221,7 @@ void setup() {
   // straight to the commissioned values.
   for (uint8_t i = 0; i < NUM_CHANNELS; ++i) {
     effBrightness_[i] = model.brightness[i];
-    effSpeed_[i]      = model.speed[i];
+    effSpeedHz_[i]    = model.speedHz[i];
   }
 
   network.begin();
@@ -230,11 +256,11 @@ void loop() {
   if (mode == Mode::Performance) {
     if (inputs.sequencePressed()) sequence.toggle();
     if (sequence.running()) {
-      sequence.fill(model.brightness, model.speed, effBrightness_, effSpeed_);
+      sequence.fill(model.brightness, model.speedHz, effBrightness_, effSpeedHz_);
     } else if (!SEQUENCE_STOP_HOLD) {
       for (uint8_t i = 0; i < NUM_CHANNELS; ++i) {
         effBrightness_[i] = model.brightness[i];
-        effSpeed_[i]      = model.speed[i];
+        effSpeedHz_[i]    = model.speedHz[i];
       }
     }
     // else: hold the last produced frame (SEQUENCE_STOP_HOLD) — leave eff as-is.
@@ -242,22 +268,23 @@ void loop() {
     if (sequence.running()) sequence.stop();
     for (uint8_t i = 0; i < NUM_CHANNELS; ++i) {
       effBrightness_[i] = model.brightness[i];
-      effSpeed_[i]      = model.speed[i];
+      effSpeedHz_[i]    = model.speedHz[i];
     }
   }
 
   // Per-arc kill switches: force disabled arcs dark/stopped whatever the mode
   // decided; the controllers' ramps make the transition gentle. Masked into
   // copies so the held eff frame survives an off/on cycle (SEQUENCE_STOP_HOLD).
-  uint8_t outBrightness[NUM_CHANNELS], outSpeed[NUM_CHANNELS];
+  uint8_t  outBrightness[NUM_CHANNELS];
+  uint16_t outSpeedHz[NUM_CHANNELS];
   for (uint8_t i = 0; i < NUM_CHANNELS; ++i) {
     outBrightness[i] = arcOn_[i] ? effBrightness_[i] : 0;
-    outSpeed[i]      = arcOn_[i] ? effSpeed_[i]      : 0;
+    outSpeedHz[i]    = arcOn_[i] ? effSpeedHz_[i]    : 0;
   }
 
   // Push targets and pump the ramps.
   bulbs.setTargets(outBrightness);
-  motors.setTargets(outSpeed);
+  motors.setTargets(outSpeedHz);
   bulbs.update();
   motors.update();
 
@@ -269,8 +296,11 @@ void loop() {
     statusLed.set(LedState::Ota);
   } else if (network.connecting()) {
     statusLed.set(LedState::WifiConnecting);
-  } else if (mode == Mode::Performance && sequence.running()) {
-    statusLed.set(LedState::PerformanceRun);
+  } else if (mode == Mode::Performance) {
+    // Blue the moment the switch moves, so the operator gets feedback from the
+    // switch itself rather than only from the arcs once a piece is under way.
+    statusLed.set(sequence.running() ? LedState::PerformanceRun
+                                     : LedState::PerformanceIdle);
   } else {
     statusLed.set(LedState::GalleryHealthy);
   }

@@ -53,7 +53,9 @@ Set with the physical switch on the box.
 speed, arc 2 at its own, and so on, indefinitely. This is the normal day-to-day mode.
 
 **Performance** — the box plays a **sequence**: a timed piece where arcs fade in and out
-in a set order. Press the sequence button to start it; press again to stop.
+in a set order. The status light turns blue and blinks the moment you move the switch,
+which is your confirmation it has taken. Press the sequence button to start the piece;
+press again to stop.
 
 When you stop a sequence, the arcs **hold wherever they are** rather than jumping back.
 Flip the switch to Gallery to return them to their normal settings.
@@ -65,8 +67,13 @@ Flip the switch to Gallery to return them to their normal settings.
 The box hosts its own web page. You reach it from a phone, tablet, or laptop.
 
 **If the box is on the gallery WiFi** — connect your device to the same network and go to
-the address shown on the box's status line, e.g. `http://192.168.1.47`. On Macs, iPhones,
-and iPads `http://slow-arc.local` usually works too.
+`http://slow-arc.local`. That name follows the box around, so you never need to know or
+write down the number the router gave it. It works on Macs, iPhones, iPads, and current
+Windows; on anything that can't resolve it, use the numeric address shown on the box's
+status line instead, e.g. `http://192.168.1.47`.
+
+The status line prints both, and the `slow-arc.local` line is a link — so once you're on
+the page from any route, that's where to find the address again.
 
 **If the box is not on any network** (a new box, or the WiFi is down) — it makes its own
 network:
@@ -88,10 +95,18 @@ on site.
 |---|---|
 | Solid amber | Starting up. Normal for the first few seconds. |
 | Slow green pulse | Healthy, in Gallery mode. |
+| **Blue blinking** | Healthy, in Performance mode, waiting. Press the sequence button. |
 | Slow blue pulse | Healthy, sequence playing. |
 | Amber pulsing | Looking for WiFi. Harmless — the arcs run regardless. |
 | Fast blue flicker | A software update is being installed. Do not cut the power. |
 | **Red flashes** | A fault. **Count the flashes** — see below. |
+
+The light turns blue the instant you move the switch to Performance, so you can
+confirm the switch has taken without waiting to see what the arcs do. It blinks
+on and off while waiting and settles into a smooth breathing pulse once a
+sequence is playing. (The blue flicker of a software update never goes fully
+dark — that is how you tell the two apart, and updates only happen when someone
+is deliberately installing one.)
 
 Red flashes repeat in groups with a pause between:
 
@@ -107,24 +122,34 @@ is worth mentioning but not urgent.
 
 ## 6. The Control tab
 
-The top strip is the box's status at a glance: healthy or faulty, which mode, whether a
-sequence is running, the WiFi, and how long it has been on.
+The top strip is the box's status at a glance: healthy or faulty, which mode, which
+sequence is selected and whether it is running, the WiFi, and how long it has been on.
+
+If the strip turns red and says **OFFLINE**, the page has lost contact with the box —
+it has been powered down, or your phone has left the network. The sliders below grey
+out and stop responding, because what they are showing is the last reading received
+rather than anything current. The strip counts up how long it has been out of contact,
+and comes back by itself within a few seconds of the box returning.
 
 Below it, one column per arc. **Note that these values should not be adjusted except on 
 explicit instructions from Conrad or his team.**
 
 - The **blue slider (M)** is motor speed, 0–100.
 - The **yellow slider (B)** is bulb brightness, 0–100.
-- The number under M is the motor's actual speed in Hz. You can ignore it; it's there for
-  setup.
+- The **box under the two sliders** is the motor's speed in Hz — the actual step rate,
+  60 to 8000. It is the real setting; the M slider is just a quick way to move it. Type a
+  number and press Enter (or tap away) to set a speed exactly, e.g. to give two arcs the
+  same rate or to return to a number written down at commissioning.
 - The **on / off button** switches that arc off completely — dark and stopped — without
   losing its settings. Useful if a bulb blows or an arc needs attention mid-show. Press
   again to bring it back exactly as it was.
 
-Changes take effect as you drag, and save themselves a second or two later. There is no
-save button and nothing to confirm.
+Changes take effect as you drag or as you leave the Hz box, and save themselves a second
+or two later. There is no save button and nothing to confirm.
 
-Set 0 for a slider to turn that half off: brightness 0 is dark, speed 0 is stopped.
+Set 0 to turn that half off: brightness 0 is dark, speed 0 is stopped. A typed speed
+between 1 and 59 Hz is raised to 60 — below that the motor is switched off instead, so
+there is no crawling-but-not-quite-stopped state.
 
 ![The Control tab](docs/img/ui-control.png)
 
@@ -137,8 +162,13 @@ In Performance mode a timeline appears above the sliders.
 ![Performance mode with a sequence running](docs/img/ui-performance.png)
 
 Each of the six rows is one arc. The yellow shape shows when that arc is lit; the red
-line is the current position, sweeping left to right and looping. The header shows how
-far through you are — `5:32 / 11:08` above.
+line is the current position, sweeping left to right and looping. The header names the
+piece being drawn and shows how far through you are — `5:32 / 11:08` above.
+
+If you pick a different sequence while one is playing, the header says so —
+*"FAST" starts on the next press*. The drawing keeps showing the piece that is
+actually playing until you stop and start it again. Nothing has been lost; the box
+is just refusing to cut a piece off part-way through.
 
 Note that the sequence controls **when** each arc rises and falls, not how bright or fast
 it goes. That still comes from the sliders. So you can re-tune the look of the piece at
@@ -154,7 +184,8 @@ Three sections.
 
 **Active sequence** — pick which piece plays. If a sequence is playing when you change
 this, the new one starts at the **next** press of the sequence button, so you never cut a
-piece off mid-way.
+piece off mid-way. The line under the menu tells you which of the two happened, and the
+Control tab names the selected piece in its status strip.
 
 **Preview** — the same timeline view, for the sequence you selected, so you can see its
 shape before committing to it. The header gives its ramp and total length.
@@ -194,7 +225,11 @@ Open **WiFi setup** at the bottom of the Control tab.
 2. Tap your network in the list. A padlock means it needs a password.
 3. Type the password and press **Join**.
 4. Watch the status line at the top. It changes to `station` with an address once the box
-   has joined.
+   has joined, and an **Address** line appears showing `http://slow-arc.local`.
+
+Your phone drops off the `SlowArc-Setup` network about a minute after the join succeeds.
+Rejoin the gallery WiFi and go to `http://slow-arc.local` — no need to have noted the
+number.
 
 If the join fails, the `SlowArc-Setup` network stays up — rejoin it and try again. The
 box will not strand you.
@@ -211,9 +246,13 @@ settings from a phone.
 have been switched off. Then check its sliders aren't at 0. Then check the status light
 for red flashes.
 
-**The page says "offline" or won't load.** Your phone has probably dropped off the
-network. Reconnect it. The arcs keep running regardless — the page going away doesn't
-affect the artwork.
+**The page says OFFLINE or won't load.** Either the box is powered down or your phone
+has dropped off the network. Check the box's status light first: if it is lit, the box
+is fine and the problem is at your end — reconnect and the page recovers by itself. The
+arcs keep running regardless; the page going away doesn't affect the artwork.
+
+While the page says OFFLINE the sliders are greyed out on purpose. They are showing the
+last values received, not what the box is doing, so they are not safe to drag.
 
 **The status light is flashing red.**
 
@@ -239,8 +278,8 @@ Sequences tab and choose it under *Active sequence*, then press the sequence but
 |---|---|
 | Setup network | `SlowArc-Setup` / `slowarc123` |
 | Page address on that network | `http://192.168.4.1` |
-| Page address on gallery WiFi | shown on the box's status line, or `http://slow-arc.local` |
-| Healthy light | slow green pulse (Gallery) or slow blue pulse (sequence playing) |
+| Page address on gallery WiFi | `http://slow-arc.local` (or the number on the status line) |
+| Healthy light | slow green pulse (Gallery), blue blinking (Performance, waiting), slow blue pulse (sequence playing) |
 | Red 2 / 3 / 4 flashes | bulb / motor / power |
 | Settings saved automatically | yes — brightness, speed, mode, sequences |
 | Survives a power cut | everything, except arcs switched off from the page |

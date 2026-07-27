@@ -3,8 +3,8 @@
 // MotorController — owns the six stepper STEP/DIR/EN lines and the EN safe state.
 //
 // Responsibilities (spec §4, §8):
-//   * Map a per-channel speed set-point (0..255) onto a step rate and ramp toward
-//     it (soft accel/decel) — never an instantaneous jump.
+//   * Take a per-channel step rate in Hz and ramp toward it (soft accel/decel) —
+//     never an instantaneous jump.
 //   * Own the EN lines and the safe-shutdown path. EN is active-LOW and defaults
 //     DISABLED at boot (external pull-up); drivers are only enabled once ready.
 //
@@ -21,6 +21,15 @@
 #include <stdint.h>
 #include "config.h"
 
+// A step rate the hardware will actually emit: 0 (stopped), else MIN..MAX Hz.
+// Shared with the web UI so a typed rate is clamped the same way everywhere.
+inline uint16_t motorClampHz(long hz) {
+  if (hz <= 0) return 0;
+  if (hz < (long)MOTOR_MIN_SPEED_HZ) return (uint16_t)MOTOR_MIN_SPEED_HZ;
+  if (hz > (long)MOTOR_MAX_SPEED_HZ) return (uint16_t)MOTOR_MAX_SPEED_HZ;
+  return (uint16_t)hz;
+}
+
 class MotorController {
  public:
   // Configure every channel's MCPWM timer + pins and enable the drivers that came
@@ -28,9 +37,10 @@ class MotorController {
   // the channels that did initialise are still enabled and usable.
   bool begin();
 
-  // Set the target speed for one channel (0..255). 0 stops (ramped).
-  void setTarget(uint8_t ch, uint8_t value);
-  void setTargets(const uint8_t values[NUM_CHANNELS]);
+  // Set the target step rate for one channel, in Hz. 0 stops (ramped); anything
+  // else is clamped into MIN..MAX.
+  void setTarget(uint8_t ch, uint16_t hz);
+  void setTargets(const uint16_t values[NUM_CHANNELS]);
 
   // Pump the soft-start ramp and push new frequencies to MCPWM. Call every loop.
   void update();
@@ -39,18 +49,16 @@ class MotorController {
   // Called on fault and before a deliberate reset.
   void emergencyStop();
 
-  uint8_t  speed(uint8_t ch) const { return ch < NUM_CHANNELS ? speedTarget_[ch] : 0; }
+  uint32_t targetHz(uint8_t ch) const { return ch < NUM_CHANNELS ? targetHz_[ch] : 0; }
   uint32_t commandedHz(uint8_t ch) const { return ch < NUM_CHANNELS ? commandedHz_[ch] : 0; }
   bool     channelOk(uint8_t ch) const { return ch < NUM_CHANNELS && channelOk_[ch]; }
   bool     ok() const { return ok_; }
   bool     enabled() const { return enabled_; }
 
  private:
-  uint32_t speedToHz(uint8_t value) const;
   void     emitChannel(uint8_t ch, uint32_t hz);   // drive a 50% square wave at hz
   void     stopChannel(uint8_t ch);                // hold STEP low, no pulses
 
-  uint8_t  speedTarget_[NUM_CHANNELS] = {0};       // last commanded 0..255
   uint32_t targetHz_[NUM_CHANNELS]    = {0};       // 0, or MIN..MAX Hz
   float    currentHz_[NUM_CHANNELS]   = {0};       // ramped actual; 0 == stopped
   uint32_t commandedHz_[NUM_CHANNELS] = {0};       // freq last written to MCPWM

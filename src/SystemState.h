@@ -19,6 +19,7 @@ enum class Fault : uint8_t {
 enum class LedState : uint8_t {
   Boot,             // solid amber  — boot / soft-start
   GalleryHealthy,   // slow green pulse
+  PerformanceIdle,  // fast blue blink — armed, waiting for the button
   PerformanceRun,   // slow blue pulse
   WifiConnecting,   // amber pulse
   Ota,              // fast blue pulse

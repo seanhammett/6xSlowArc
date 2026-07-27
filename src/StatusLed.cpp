@@ -16,14 +16,26 @@
 // off-board pin is harmless.)
 //
 // A cycle-counted bit-bang is trivial and reliable: 24 bits of ~1.25 us each
-// => ~30 us with interrupts masked, well within the loop's budget and far below
-// the WS2812's >50 us reset gap.
+// => ~30 us with interrupts masked, comfortably within the loop's budget.
+//
+// Frames are rate-limited (see update()). The WS2812 latches what it has
+// received only after the data line has been idle for longer than its reset
+// time; frames sent closer together than that are read as data for a downstream
+// pixel and the colour on show does not change. The main loop comes round far
+// faster than that on its own, so the gap has to be imposed here.
 
 namespace {
 // WS2812 bit timing in CPU cycles at 240 MHz (1 us = 240 cycles).
 //   '1' : ~0.8 us high, ~0.45 us low      '0' : ~0.4 us high, ~0.85 us low
 constexpr uint32_t T1H = 192, T1L = 108;
 constexpr uint32_t T0H = 96,  T0L = 204;
+
+// Minimum interval between frames. The datasheet reset time is 50 us and the
+// later -V5 parts want nearer 280, so 10 ms is an order of magnitude clear of
+// the fussiest part and every frame is certain to latch. 100 fps still resolves
+// the animations far more finely than the eye, and holding interrupts off for
+// 30 us once per 10 ms costs the rest of the system nothing.
+constexpr uint32_t FRAME_INTERVAL_US = 10000;
 
 static_assert(PIN_STATUS_LED >= 32 && PIN_STATUS_LED_EXT >= 32,
               "bit-bang uses the GPIO_OUT1 (pins >=32) registers");
@@ -70,6 +82,8 @@ void StatusLed::begin() {
   pinMode(PIN_STATUS_LED_EXT, OUTPUT);
   digitalWrite(PIN_STATUS_LED_EXT, LOW);
   sendPixel(0, 0, 0);                 // clear both
+  lastSendUs_ = micros();             // the first update() owes this frame its gap
+  sent_       = true;
 }
 
 void StatusLed::set(LedState state, Fault fault) {
@@ -78,6 +92,16 @@ void StatusLed::set(LedState state, Fault fault) {
 }
 
 void StatusLed::update() {
+  // Leave the data line idle long enough between frames for the pixel to latch.
+  // Without this the loop re-sends every ~50 us, the pixel never sees a reset,
+  // and the colour on show only changes when something else in the loop happens
+  // to stall — which reads as an animation running at a random rate. A smooth
+  // pulse hides it; a hard blink does not.
+  const uint32_t nowUs = micros();
+  if (sent_ && (uint32_t)(nowUs - lastSendUs_) < FRAME_INTERVAL_US) return;
+  lastSendUs_ = nowUs;
+  sent_       = true;
+
   // Each state yields a base colour (full-scale r,g,b) and an intensity k; the
   // master brightness and k are applied exactly once, below.
   uint8_t r = 0, g = 0, b = 0;
@@ -92,6 +116,16 @@ void StatusLed::update() {
       g = 255;
       k = 0.15f + 0.85f * pulse(2600);              // slow green pulse
       break;
+
+    case LedState::PerformanceIdle: {
+      // Performance selected but not playing. A hard blink — full on, then fully
+      // dark — so flipping the switch gives immediate feedback, and so it never
+      // reads as the OTA state, which is a smooth glow that never goes out.
+      const uint32_t onMs = 150, periodMs = 500;
+      b = 255;
+      k = (millis() % periodMs < onMs) ? 1.0f : 0.0f;
+      break;
+    }
 
     case LedState::PerformanceRun:
       b = 255;

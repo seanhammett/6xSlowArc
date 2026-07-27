@@ -4,6 +4,7 @@
 #include <WiFi.h>
 
 #include "config.h"
+#include "MotorController.h"        // motorClampHz — one rule for a typed rate
 
 namespace {
 AsyncWebServer server(80);
@@ -21,6 +22,7 @@ const char kIndexHtml[] PROGMEM = R"HTML(
   .status{display:flex;flex-wrap:wrap;gap:.5rem 1rem;background:#1e2128;border-radius:8px;padding:.75rem 1rem;margin:.5rem 0 1rem}
   .status div{font-size:.85rem}
   .status b{color:#9ad}
+  a{color:#9ad}
   .card{background:#1e2128;border-radius:8px;padding:.75rem 1rem;margin:.6rem 0}
   output{font-weight:bold;color:#9ad}
   .scroll{overflow-x:auto}
@@ -33,9 +35,22 @@ const char kIndexHtml[] PROGMEM = R"HTML(
   .sl input[type=range]{writing-mode:vertical-lr;direction:rtl;-webkit-appearance:slider-vertical;width:1.4rem;height:300px;margin:0;accent-color:#4a90d9}
   /* Bulb brightness fills warm yellow instead. */
   .sl input[type=range][id^=brightness]{accent-color:#f5c518}
-  /* Fixed width so the value/Hz digits changing (0..100, 0..4000) never reflow the row. */
-  .cap{font-size:.7rem;margin-top:.4rem;text-align:center;font-variant-numeric:tabular-nums;white-space:nowrap;color:#bbb;width:3rem}
-  .pwr{margin-top:.4rem;font-size:.7rem;padding:.15rem .6rem;border-radius:6px;cursor:pointer;background:#1e2128;border:1px solid #445;width:3.4rem}
+  /* Fixed width so the changing digits never reflow the row — and the pair's
+     whole width comes from these two captions, so they are kept as narrow as
+     "M 100%" allows. Six arcs must fit a laptop or tablet without scrolling. */
+  .cap{font-size:.7rem;margin-top:.4rem;text-align:center;font-variant-numeric:tabular-nums;white-space:nowrap;color:#bbb;width:2.8rem}
+  /* The Hz box sits under BOTH sliders rather than inside the motor caption, so
+     a four-digit rate doesn't widen the motor column and every column with it. */
+  .hzrow{font-size:.65rem;color:#bbb;margin-top:.3rem;white-space:nowrap}
+  /* Typed step rate. Spinners are dropped: they cost width and 1 Hz nudges are
+     useless. Qualified with [type=number] so it outranks the generic number-input
+     rule further down — unqualified, .hzin loses on specificity and the box comes
+     out at 4.5rem, which is what made the six columns overflow the screen. */
+  input[type=number].hzin{width:2.6rem;font-size:.7rem;padding:.1rem .2rem;text-align:right;
+        background:#15171c;border:1px solid #444;border-radius:4px;color:#e8e8e8;
+        font-variant-numeric:tabular-nums;-moz-appearance:textfield}
+  .hzin::-webkit-outer-spin-button,.hzin::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+  .pwr{margin-top:.4rem;font-size:.7rem;padding:.15rem .4rem;border-radius:6px;cursor:pointer;background:#1e2128;border:1px solid #445;width:3rem}
   .pwr.on{color:#3c6;border-color:#3c6}
   .pwr.off{color:#e54;border-color:#e54}
   .dot{display:inline-block;width:.6rem;height:.6rem;border-radius:50%;margin-right:.3rem;vertical-align:middle}
@@ -60,6 +75,27 @@ const char kIndexHtml[] PROGMEM = R"HTML(
   .step{display:flex;gap:.4rem;align-items:center;margin:.25rem 0;font-size:.85rem;flex-wrap:wrap}
   .step label{display:flex;align-items:center;gap:.15rem;color:#bbb}
   #pvname,#selmsg,#edmsg{font-size:.85rem;color:#bbb}
+  /* Unreachable box: the controls are showing the last known values, which are
+     not the box's values any more. Dim them and refuse input rather than let
+     someone drag a slider that goes nowhere. */
+  .stale{opacity:.4;pointer-events:none;filter:grayscale(.6)}
+  #offmsg{color:#e54}
+  /* Anything too narrow for the full-size rack (which needs ~675px) gets the
+     compact one, which needs ~385px — so there is no width in between where the
+     six columns have to be scrolled sideways. */
+  @media (max-width:680px){
+    body{padding:.5rem}
+    .rack{gap:.15rem}
+    .pair{padding:.4rem .1rem}
+    .sls{gap:.1rem}
+    .cap{width:1.6rem;font-size:.6rem}   /* below this the Hz row sets the width */
+    .cap .k{display:block}          /* M / B onto their own line */
+    .cap .pc{display:none}          /* the % is inferable; the width is not */
+    .hzrow{font-size:.55rem}
+    input[type=number].hzin{width:2rem;font-size:.6rem}
+    .sl input[type=range]{width:1.1rem;height:230px}
+    .pwr{width:2.6rem;font-size:.6rem;padding:.1rem .2rem}
+  }
 </style></head><body>
 <h1>Slow Arc Controller</h1>
 <div class="status" id="status">connecting…</div>
@@ -109,38 +145,68 @@ const char kIndexHtml[] PROGMEM = R"HTML(
 </div>
 </div>
 <script>
-const N=6,MAXHZ=4000,MINHZ=60; // mirror MOTOR_MAX/MIN_SPEED_HZ in config.h
-// Sliders are 0..100 for ease of use; the model/NVS store 0..255, so convert
-// at the boundary (send/poll). Hz is computed from the 0..255 value the firmware
-// actually maps (MotorController: 0->stop, else MIN+(MAX-MIN)*(v-1)/254).
+const N=6,MAXHZ=8000,MINHZ=60; // mirror MOTOR_MAX/MIN_SPEED_HZ in config.h
+// Brightness slider is 0..100 for ease of use; the model/NVS store 0..255, so
+// convert at the boundary (send/poll).
 const to255=p=>Math.round(p*255/100), to100=v=>Math.round(v*100/255);
-function hz(p){const v=to255(p);return v>0?Math.round(MINHZ+(MAXHZ-MINHZ)*(v-1)/254):0}
+// Speed is Hz end to end — the box IS the set-point and the slider is a coarse
+// way to move it. 0% = stopped, 1% = MINHZ, 100% = MAXHZ.
+const pctToHz=p=>p<=0?0:Math.round(MINHZ+(MAXHZ-MINHZ)*(p-1)/99);
+const hzToPct=h=>h<=0?0:Math.max(1,Math.min(100,Math.round(1+(h-MINHZ)*99/(MAXHZ-MINHZ))));
+// Mirror motorClampHz(): anything between a stop and the floor becomes the floor.
+const clampHz=h=>!isFinite(h)||h<=0?0:Math.max(MINHZ,Math.min(MAXHZ,Math.round(h)));
+// A fetch that gives up. Without this a poll to a box whose power has been cut
+// sits in the OS connect timeout for a minute or more, and the page happily goes
+// on showing the last frame as if it were live.
+function fetchT(url,init={},ms=4000){
+  const c=new AbortController(),t=setTimeout(()=>c.abort(),ms);
+  return fetch(url,{...init,signal:c.signal,cache:'no-store'}).finally(()=>clearTimeout(t));
+}
+const post=u=>fetchT(u,{method:'POST'}).catch(()=>{});   // fire-and-forget writes
 function build(){
   const rack=document.getElementById('rack');
   for(let i=0;i<N;i++){
     rack.insertAdjacentHTML('beforeend',
       `<div class="pair"><div class="arclbl">Arc ${i+1}</div><div class="sls">`+
        `<div class="sl"><input type="range" min="0" max="100" value="0" id="speed${i}">`+
-         `<div class="cap">M <output>0</output>%<br><span class="hz">0</span> Hz</div></div>`+
+         `<div class="cap"><span class="k">M</span> <output>0</output><span class="pc">%</span></div></div>`+
        `<div class="sl"><input type="range" min="0" max="100" value="0" id="brightness${i}">`+
-         `<div class="cap">B <output>0</output>%</div></div>`+
-      `</div><button class="pwr on" id="pwr${i}" onclick="togglePwr(${i})">on</button></div>`);
+         `<div class="cap"><span class="k">B</span> <output>0</output><span class="pc">%</span></div></div>`+
+       `</div>`+
+       `<div class="hzrow"><input type="number" class="hzin" id="hz${i}" min="0" max="${MAXHZ}" step="1" value="0"> Hz</div>`+
+      `<button class="pwr on" id="pwr${i}" onclick="togglePwr(${i})">on</button></div>`);
   }
-  for(let i=0;i<N;i++)for(const kind of ['speed','brightness']){
-    const sl=document.getElementById(kind+i);
-    sl.addEventListener('input',()=>cap(kind,i));
-    sl.addEventListener('change',()=>send(i));
+  for(let i=0;i<N;i++){
+    const br=document.getElementById('brightness'+i);
+    br.addEventListener('input',()=>cap('brightness',i));
+    br.addEventListener('change',()=>send(i));
+    const sp=document.getElementById('speed'+i);
+    sp.addEventListener('input',()=>slid(i));        // drag: box follows the slider
+    sp.addEventListener('change',()=>send(i));
+    const hb=document.getElementById('hz'+i);
+    hb.addEventListener('change',()=>typed(i));      // fires on Enter or blur
+    hb.addEventListener('keydown',e=>{if(e.key=='Enter')hb.blur()});
   }
 }
 function cap(kind,i){
-  const sl=document.getElementById(kind+i),c=sl.parentElement;
-  c.querySelector('output').textContent=sl.value;
-  if(kind=='speed')c.querySelector('.hz').textContent=hz(+sl.value);
+  const sl=document.getElementById(kind+i);
+  sl.parentElement.querySelector('output').textContent=sl.value;
+}
+function slid(i){                                    // slider moved
+  cap('speed',i);
+  document.getElementById('hz'+i).value=pctToHz(+document.getElementById('speed'+i).value);
+}
+function typed(i){                                   // exact rate entered
+  const hb=document.getElementById('hz'+i),h=clampHz(parseInt(hb.value,10));
+  hb.value=h;                                        // show what the box will do
+  document.getElementById('speed'+i).value=hzToPct(h);
+  cap('speed',i);
+  send(i);
 }
 function send(i){
   const b=to255(+document.getElementById('brightness'+i).value);
-  const s=to255(+document.getElementById('speed'+i).value);
-  fetch(`/api/set?ch=${i}&brightness=${b}&speed=${s}`,{method:'POST'});
+  const s=clampHz(parseInt(document.getElementById('hz'+i).value,10));
+  post(`/api/set?ch=${i}&brightness=${b}&speed=${s}`);
 }
 function setPwr(i,on){
   const b=document.getElementById('pwr'+i);
@@ -150,13 +216,13 @@ function setPwr(i,on){
 function togglePwr(i){
   const on=!document.getElementById('pwr'+i).classList.contains('on');
   setPwr(i,on);                                  // optimistic; poll re-syncs
-  fetch(`/api/arc?ch=${i}&on=${on?1:0}`,{method:'POST'});
+  post(`/api/arc?ch=${i}&on=${on?1:0}`);
 }
 async function scan(){
   const nets=document.getElementById('nets');nets.textContent='scanning…';
   for(let t=0;t<15;t++){
     try{
-      const r=await fetch('/api/scan');
+      const r=await fetchT('/api/scan');
       if(r.status==200){
         const l=await r.json();nets.textContent=l.length?'':'no networks found';
         l.sort((a,b)=>b.rssi-a.rssi).forEach(n=>{
@@ -176,16 +242,18 @@ async function scan(){
 function wsave(){
   const s=document.getElementById('wssid').value,p=document.getElementById('wpass').value;
   if(!s)return;
-  fetch(`/api/wifi?ssid=${encodeURIComponent(s)}&pass=${encodeURIComponent(p)}`,{method:'POST'});
+  post(`/api/wifi?ssid=${encodeURIComponent(s)}&pass=${encodeURIComponent(p)}`);
   document.getElementById('wmsg').textContent=
-    `joining "${s}"… watch the status line. If it fails, the SlowArc-Setup AP stays up — rejoin it and retry.`;
+    `joining "${s}"… watch the status line — it shows the box's address and its .local name once joined. If it fails, the SlowArc-Setup AP stays up — rejoin it and retry.`;
 }
 // --- Sequence timeline (Performance mode) ---------------------------------
 // Cue values are scales of the set-points; the plot shows WHEN each arc moves.
 // The playhead position comes from seq_t each poll and free-runs between polls.
-let seq=null,seqT=0,seqAt=0,seqRun=false,seqLive=false;
+// seqName is the piece the cue table below IS; seqQueued is one selected while
+// a piece was playing, which by design only takes over at the next press.
+let seq=null,seqT=0,seqAt=0,seqRun=false,seqLive=false,seqName='',seqQueued='';
 async function loadSeq(){
-  try{seq=await (await fetch('/api/sequence')).json();drawSeq();}catch(e){}
+  try{seq=await (await fetchT('/api/sequence')).json();drawSeq();}catch(e){}
 }
 function fmt(ms){const s=Math.floor(ms/1000);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')}
 function drawSeq(){
@@ -210,6 +278,10 @@ function drawSeq(){
     ctx.beginPath();ctx.moveTo(0,ch*laneH+.5);ctx.lineTo(W,ch*laneH+.5);ctx.stroke();
     ctx.fillStyle='#889';ctx.font='9px system-ui';ctx.fillText(ch+1,3,ch*laneH+10);
   }
+  // Name what is drawn. The timeline is the cue table the box actually holds, so
+  // if a selection is only queued this says so rather than looking ignored.
+  const nm=seqName?`“${seqName}”`:'';
+  const q=seqQueued?` · “${seqQueued}” starts on the next press`:'';
   if(!seqLive){
     // Device unreachable: freeze the playhead at the last known position.
     if(seqRun){
@@ -217,16 +289,17 @@ function drawSeq(){
       ctx.strokeStyle='#889';ctx.lineWidth=1.5;
       ctx.beginPath();ctx.moveTo(x(t),0);ctx.lineTo(x(t),H);ctx.stroke();
     }
-    document.getElementById('seqinfo').textContent='— device offline';
+    document.getElementById('seqinfo').textContent=`— ${nm} · device offline`;
     document.getElementById('seqtime').textContent='';
   }else if(seqRun){
     const t=(seqT+(performance.now()-seqAt))%seq.len;
     ctx.strokeStyle='#e54';ctx.lineWidth=1.5;
     ctx.beginPath();ctx.moveTo(x(t),0);ctx.lineTo(x(t),H);ctx.stroke();
-    document.getElementById('seqinfo').textContent='— running';
+    document.getElementById('seqinfo').textContent=`— ${nm} · running${q}`;
     document.getElementById('seqtime').textContent=`${fmt(t)} / ${fmt(seq.len)}`;
   }else{
-    document.getElementById('seqinfo').textContent='— stopped (press the sequence button)';
+    document.getElementById('seqinfo').textContent=
+      `— ${nm} · stopped (press the sequence button)${q}`;
     document.getElementById('seqtime').textContent=`loop ${fmt(seq.len)}`;
   }
 }
@@ -237,6 +310,7 @@ function tab(n){
   document.getElementById('tab1').style.display=n?'':'none';
   document.querySelectorAll('.tab').forEach((b,i)=>b.classList.toggle('on',i===n));
   if(n){loadSeqList();edRender();}
+  else poll();      // coming back to Control: show the current piece, not a 2 s-old one
 }
 function esc(s){return s.replace(/[&<>"']/g,c=>'&#'+c.charCodeAt(0)+';')}
 // Mirror of the firmware's expansion (SequenceEngine::expand): hold cue at
@@ -276,7 +350,7 @@ function drawMask(id,rampS,steps){
 }
 async function loadSeqList(){
   try{
-    const d=await (await fetch('/api/seqs')).json();
+    const d=await (await fetchT('/api/seqs')).json();
     document.getElementById('seqsel').innerHTML=d.seqs.map(s=>
       `<option value="${s.i}"${s.i==d.active?' selected':''}>${esc(s.name)}</option>`).join('');
     loadPreview();
@@ -285,7 +359,7 @@ async function loadSeqList(){
 async function loadPreview(){
   const i=document.getElementById('seqsel').value;
   try{
-    const d=await (await fetch('/api/seq?i='+i)).json();
+    const d=await (await fetchT('/api/seq?i='+i)).json();
     const len=(d.steps[d.steps.length-1].t+d.ramp)*1000;
     document.getElementById('pvname').textContent=
       `— ${d.name} · ramp ${d.ramp}s · loop ${fmt(len)}`;
@@ -293,11 +367,15 @@ async function loadPreview(){
   }catch(e){}
 }
 async function selSeq(){
-  await fetch('/api/seq/select?i='+document.getElementById('seqsel').value,{method:'POST'});
+  await post('/api/seq/select?i='+document.getElementById('seqsel').value);
   const m=document.getElementById('selmsg');
-  m.textContent='saved — plays on the next start';
-  setTimeout(()=>m.textContent='',4000);
+  // Say which of the two things happened: it is live now, or it is armed for the
+  // next press. Guessing wrong here is what makes the Control tab look stale.
+  m.textContent=seqRun?'saved — starts on the next press of the sequence button'
+                      :'saved — this is now the active sequence';
+  setTimeout(()=>m.textContent='',6000);
   loadPreview();seq=null;   // control-tab timeline refetches on its next poll
+  poll();                   // …and refresh the strip now rather than in 2 s
 }
 // --- Creator ---
 let ed={steps:[{t:4,m:1}]};
@@ -326,7 +404,7 @@ function edAdd(){
 async function edLoad(){
   const i=document.getElementById('seqsel').value;
   try{
-    const d=await (await fetch('/api/seq?i='+i)).json();
+    const d=await (await fetchT('/api/seq?i='+i)).json();
     ed={steps:d.steps.map(s=>({t:s.t,m:s.m}))};
     document.getElementById('edname').value=d.name;
     document.getElementById('edramp').value=d.ramp;
@@ -339,41 +417,82 @@ async function edSave(){
   const m=document.getElementById('edmsg');
   if(!name||!ramp||!ed.steps.length){m.textContent='— need a name, a ramp and at least one step';return}
   const steps=[...ed.steps].sort((a,b)=>a.t-b.t).map(s=>`${s.t}:${s.m}`).join(',');
-  const r=await fetch(`/api/seq/save?name=${encodeURIComponent(name)}&ramp=${ramp}&steps=${steps}`,{method:'POST'});
+  const r=await fetchT(`/api/seq/save?name=${encodeURIComponent(name)}&ramp=${ramp}&steps=${steps}`,{method:'POST'});
   m.textContent=r.ok?'— saved (same name overwrites)':'— save failed: '+await r.text();
-  if(r.ok){loadSeqList();seq=null;}
+  if(r.ok){loadSeqList();seq=null;poll();}
+}
+// --- Liveness ---------------------------------------------------------------
+// The page must never keep claiming "healthy" for a box that has been switched
+// off. Every poll is timed out, and the strip goes red once we have gone long
+// enough with no reply — the reading below is then last-known, not current.
+let polling=false,lastOkMs=0,offline=false;
+const OFFLINE_MS=5000;
+function renderOffline(){
+  const age=lastOkMs?Math.round((Date.now()-lastOkMs)/1000):0;
+  document.getElementById('status').innerHTML=
+    `<div><span class="dot bad"></span><b id="offmsg">OFFLINE</b></div>`+
+    `<div>${lastOkMs?`no reply for ${age} s`:'no reply from the box'} — `+
+      `it may be powered down, or your device has left the network</div>`+
+    `<div>The readings below are the last ones received, not live.</div>`;
+}
+function goOffline(){
+  offline=true;seqLive=false;                    // freeze the timeline, don't extrapolate
+  document.getElementById('rack').classList.add('stale');
+  renderOffline();
+  if(seq)drawSeq();
 }
 async function poll(){
+  if(polling)return;              // a hung request must not stack up behind itself
+  polling=true;
   try{
-    const r=await fetch('/api/state'); const d=await r.json();
+    const d=await (await fetchT('/api/state')).json();
+    lastOkMs=Date.now();
+    offline=false;seqLive=true;
+    document.getElementById('rack').classList.remove('stale');
     const hl=d.fault?`<span class="dot bad"></span>FAULT ${d.fault}`
        :`<span class="dot ok"></span>healthy`;
+    // Name the active piece here too: it is the one place visible in both modes,
+    // so a change made on the Sequences tab is confirmed without leaving Control.
+    const nm=d.seq_name?`<b>“${esc(d.seq_name)}”</b> `:'';
+    const q=d.seq_queued?` — “${esc(d.seq_queued)}” next`:'';
     document.getElementById('status').innerHTML=
       `<div>${hl}</div>`+
       `<div>Mode: <b>${d.mode}</b></div>`+
-      `<div>Sequence: <b>${d.running?'running':'stopped'}</b></div>`+
+      `<div>Sequence: ${nm}${d.running?'running':'stopped'}${q}</div>`+
       `<div>WiFi: <b>${d.wifi}</b> ${d.ip?('('+d.ip+')'):''}</div>`+
+      (d.host?`<div>Address: <b><a href="http://${d.host}/">http://${d.host}</a></b></div>`:'')+
       `<div>Uptime: <b>${d.uptime}s</b></div>`;
     document.getElementById('wsum').textContent=
-      `${d.wifi}${d.ssid?' · '+d.ssid:''}${d.ip?' · '+d.ip:''}`;
+      `${d.wifi}${d.ssid?' · '+d.ssid:''}${d.ip?' · '+d.ip:''}${d.host?' · '+d.host:''}`;
     const sc=document.getElementById('seqcard');
     sc.style.display=(d.mode==='Performance')?'':'none';
-    seqRun=d.running;seqT=d.seq_t;seqAt=performance.now();seqLive=true;
-    if(d.mode==='Performance'&&!seq)loadSeq();
+    seqRun=d.running;seqT=d.seq_t;seqAt=performance.now();
+    // Refetch the cue table whenever the loaded piece changes — including when
+    // another phone changed it, which no local seq=null would have caught.
+    const changed=seqName!==d.seq_name;
+    seqName=d.seq_name||'';seqQueued=d.seq_queued||'';
+    if(d.mode==='Performance'&&(!seq||changed))loadSeq();
     for(let i=0;i<N;i++){
       setPwr(i,!!d.on[i]);
-      for(const kind of ['brightness','speed']){
-        const sl=document.getElementById(kind+i);
-        if(document.activeElement!==sl)sl.value=to100(d[kind][i]);
-        cap(kind,i);
+      const br=document.getElementById('brightness'+i);
+      if(document.activeElement!==br)br.value=to100(d.brightness[i]);
+      cap('brightness',i);
+      // Speed: don't fight the operator — leave both controls alone while either
+      // the slider or the Hz box has focus, otherwise take the firmware's Hz.
+      const sp=document.getElementById('speed'+i),hb=document.getElementById('hz'+i);
+      if(document.activeElement!==sp&&document.activeElement!==hb){
+        sp.value=hzToPct(d.speed[i]);
+        hb.value=d.speed[i];
+        cap('speed',i);
       }
     }
   }catch(e){
-    document.getElementById('status').textContent='offline';
-    seqLive=false;                       // freeze the timeline, don't extrapolate
-  }
+    // One dropped poll is a blip; sustained silence is a box that is not there.
+    if(Date.now()-lastOkMs>OFFLINE_MS)goOffline();
+  }finally{polling=false}
 }
 build(); poll(); setInterval(poll,2000);
+setInterval(()=>{if(offline)renderOffline()},1000);   // keep the age counting up
 </script></body></html>
 )HTML";
 
@@ -538,8 +657,8 @@ void WebUi::begin(ChannelModel* model, ConfigStore* store, SequenceStore* seqSto
       model_->brightness[ch] = clamp255(req->getParam("brightness")->value().toInt());
       changed = true;
     }
-    if (req->hasParam("speed")) {
-      model_->speed[ch] = clamp255(req->getParam("speed")->value().toInt());
+    if (req->hasParam("speed")) {              // step rate in Hz (0 = stopped)
+      model_->speedHz[ch] = motorClampHz(req->getParam("speed")->value().toInt());
       changed = true;
     }
     if (changed) store_->markDirty();   // debounced commit happens in main loop

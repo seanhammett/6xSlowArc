@@ -43,11 +43,17 @@ static constexpr uint8_t  BULB_LARGE_STEP = 24;
 // ---------------------------------------------------------------------------
 // Motors (TMC2209 in STEP/DIR, STEP pulses from MCPWM)
 // ---------------------------------------------------------------------------
-// Speed set-point 1..255 maps linearly onto MIN..MAX step rate. 0 = stopped.
-// These are step pulses/second at whatever microstep the TMC2209 MS pins select
-// in hardware. "Slow arc" => keep MAX modest; tune on the bench.
-static constexpr uint32_t MOTOR_MAX_SPEED_HZ = 4000;
-static constexpr uint32_t MOTOR_MIN_SPEED_HZ = 60;     // floor for speed==1
+// The speed set-point IS the step rate in Hz: 0 = stopped, otherwise clamped to
+// MIN..MAX. These are step pulses/second at whatever microstep the TMC2209 MS
+// pins select in hardware. The web UI's slider is a convenience over this range;
+// the Hz box next to it sets the rate exactly.
+static constexpr uint32_t MOTOR_MAX_SPEED_HZ = 8000;
+static constexpr uint32_t MOTOR_MIN_SPEED_HZ = 60;     // slowest rate we emit
+
+// Firmware before the Hz set-points stored speed as a 0..255 value mapped over
+// MIN..this. Kept only so ConfigStore can convert an old NVS blob to Hz without
+// changing what the commissioned arcs actually do.
+static constexpr uint32_t MOTOR_LEGACY_MAX_SPEED_HZ = 4000;
 static constexpr uint32_t MOTOR_ACCEL_HZ_S  = 1500;    // ramp rate, steps/s^2
 static constexpr bool     MOTOR_DIR_FORWARD = true;    // global rotation sense
 

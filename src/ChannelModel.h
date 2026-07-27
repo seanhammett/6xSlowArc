@@ -2,9 +2,14 @@
 //
 // ChannelModel — the single source of the persisted control values.
 //
-// Holds, for all six channels, the brightness and speed SET-POINTS (0..255)
-// plus the current operating mode. These originate from the web UI or, on first
-// boot, the compiled-in defaults, and are persisted to NVS by ConfigStore.
+// Holds, for all six channels, the brightness set-point (0..255) and the motor
+// speed set-point (step rate in Hz) plus the current operating mode. These
+// originate from the web UI or, on first boot, the compiled-in defaults, and
+// are persisted to NVS by ConfigStore.
+//
+// Speed is stored as Hz rather than a 0..255 scale so a rate typed into the web
+// UI is the rate the motor runs at — 255 steps over the range would quantise it
+// to ~31 Hz and no typed number would survive a round trip.
 //
 // The per-channel "current" (ramping) values referenced in the spec live inside
 // BulbController and MotorController, which own the ramps — keeping them there
@@ -21,16 +26,16 @@ enum class Mode : uint8_t {
 };
 
 struct ChannelModel {
-  uint8_t brightness[NUM_CHANNELS];   // 0..255 set-point
-  uint8_t speed[NUM_CHANNELS];        // 0..255 set-point (0 = motor stopped)
-  Mode    mode;
+  uint8_t  brightness[NUM_CHANNELS];  // 0..255 set-point
+  uint16_t speedHz[NUM_CHANNELS];     // step rate in Hz (0 = motor stopped)
+  Mode     mode;
 
   // Compiled-in first-boot defaults (used only when NVS is empty). Conservative:
   // dim and slow so a fresh, un-commissioned box can't surprise anyone.
   void loadDefaults() {
     for (uint8_t i = 0; i < NUM_CHANNELS; ++i) {
       brightness[i] = 40;
-      speed[i]      = 20;
+      speedHz[i]    = 350;
     }
     mode = Mode::Gallery;
   }

@@ -64,13 +64,6 @@ bool MotorController::begin() {
   return ok_;
 }
 
-uint32_t MotorController::speedToHz(uint8_t value) const {
-  if (value == 0) return 0;
-  // Linear map 1..255 -> MIN..MAX Hz.
-  uint32_t span = MOTOR_MAX_SPEED_HZ - MOTOR_MIN_SPEED_HZ;
-  return MOTOR_MIN_SPEED_HZ + (uint32_t)((uint64_t)span * (value - 1) / 254);
-}
-
 void MotorController::emitChannel(uint8_t ch, uint32_t hz) {
   mcpwm_set_frequency(unitOf(ch), timerOf(ch), hz);
   mcpwm_set_duty(unitOf(ch), timerOf(ch), MCPWM_GEN_A, 50.0f);
@@ -83,13 +76,14 @@ void MotorController::stopChannel(uint8_t ch) {
   commandedHz_[ch] = 0;
 }
 
-void MotorController::setTarget(uint8_t ch, uint8_t value) {
+void MotorController::setTarget(uint8_t ch, uint16_t hz) {
   if (ch >= NUM_CHANNELS) return;
-  speedTarget_[ch] = value;
-  targetHz_[ch]    = speedToHz(value);
+  // Clamp here rather than trusting the caller: a sequence scaling a set-point
+  // down can land between 1 Hz and the floor, and we never emit below MIN.
+  targetHz_[ch] = motorClampHz(hz);
 }
 
-void MotorController::setTargets(const uint8_t values[NUM_CHANNELS]) {
+void MotorController::setTargets(const uint16_t values[NUM_CHANNELS]) {
   for (uint8_t ch = 0; ch < NUM_CHANNELS; ++ch) setTarget(ch, values[ch]);
 }
 

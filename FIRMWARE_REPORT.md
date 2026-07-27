@@ -112,8 +112,16 @@ range in `BULB_RAMP_MS = 350 ms`; a per‑channel **stagger** (`BULB_STAGGER_MS 
 and a re‑stagger on large jumps (`BULB_LARGE_STEP = 24`) keep twelve cold filaments from
 inrushing together on the shared 1000 W rail.
 
-**Motors** — 0..255 → `60..4000 Hz` step rate (0 = stopped), ramped in software at
-`MOTOR_ACCEL_HZ_S = 1500 Hz/s` for soft start/stop.
+**Motors** — the set‑point **is** the step rate in Hz: `0` (stopped) or `60..8000`, ramped
+in software at `MOTOR_ACCEL_HZ_S = 1500 Hz/s` for soft start/stop. Rates are stored as Hz
+rather than a 0..255 scale so a rate typed into the web UI survives the round trip — 255
+steps over the range would quantise it to ~31 Hz. `motorClampHz()`
+([MotorController.h](src/MotorController.h)) is the single clamp, shared with the web
+endpoint. Sequence cues still scale the set‑point (255 = commissioned rate), which now
+scales Hz directly.
+
+NVS blob v1 (0..255 speeds, ceiling 4000 Hz) is migrated on first boot of this firmware —
+converted with the old mapping so a commissioned arc keeps the rate it was running.
 
 **Per‑arc kill switches** — the web UI can force any arc dark and stopped regardless of
 mode. Runtime only: never persisted, boots all‑on, and the set‑points are left untouched.
@@ -126,10 +134,27 @@ an off/on cycle.
 |-------|-----------|
 | Boot / soft‑start | solid amber |
 | Gallery healthy | slow green pulse |
+| Performance armed | fast blue **blink** (150 ms on / 350 ms off) |
 | Performance running | slow blue pulse |
 | WiFi connecting | amber pulse |
 | OTA in progress | fast blue pulse |
 | Fault | red blink, count = subsystem (2 = bulb/DAC, 3 = motor, 4 = supply/brownout) |
+
+Performance mode goes blue on the switch edge rather than on the first sequence frame, so
+the switch confirms itself. The two fast‑blue states differ in shape, not rate: the armed
+blink goes fully dark between flashes, the OTA pulse never does (its floor is `k = 0.10`).
+
+**Frame rate** — `update()` rate‑limits itself to 100 fps (`FRAME_INTERVAL_US`). This is
+not cosmetic. A WS2812 latches a frame only after the data line has been idle longer than
+its reset time (50 µs on the datasheet, nearer 280 µs on ‑V5 parts); frames sent closer
+together are read as data for a downstream pixel and the colour on show does not change.
+The main loop is entirely non‑blocking — hardware MCPWM, `dt == 0` early‑returns in both
+ramp updaters — so it came round every ~50 µs and the unthrottled driver never left a
+gap. The pixel then only changed colour when something else stalled the loop (WiFi task,
+async request, I2C write during a bulb ramp), which is irregular. Smooth pulses hid this
+completely: a missed latch just holds the previous brightness a few ms. The armed blink
+was the first hard on/off state, and it exposed it as a blink at a visibly random rate.
+A 10 ms gap is over an order of magnitude clear of the fussiest part.
 
 **Safety** — task watchdog (`8 s`, panic+reset), unsubscribed during OTA and re‑armed if
 the OTA aborts. On any reset the EN pull‑ups hold all drivers disabled; a brownout reset
@@ -171,16 +196,35 @@ Stop behaviour is set by `SEQUENCE_STOP_HOLD` (config.h): hold the last produced
 
 Single PROGMEM page, two tabs:
 
-- **Control** — per‑arc brightness/speed sliders, per‑arc on/off buttons, live status
-  (mode, running, WiFi, IP, fault, uptime), a timeline view of the running sequence, and
-  the WiFi provisioning card.
+- **Control** — per‑arc brightness/speed sliders, a typed Hz box per arc, per‑arc on/off
+  buttons, live status (mode, active sequence, running, WiFi, IP, fault, uptime), a
+  timeline view of the running sequence, and the WiFi provisioning card.
 - **Sequences** — list/select stored sequences, preview, and create/save a new one.
+
+**Layout** — the six arcs are sized to fit the viewport, not to be scrolled: the full rack
+needs ~676 px and a compact variant below 680 px needs ~390 px, so there is no width where
+the columns must be panned sideways. Column width is set by the two fixed‑width captions
+and the Hz row, so those (not the sliders) are what a layout change must be measured
+against.
+
+**Liveness** — `/api/state` is polled every 2 s through a 4 s `AbortController` timeout,
+with overlapping polls suppressed. After 5 s with no reply the strip turns red and reports
+`OFFLINE` with the age of the last reading, the rack is dimmed and `pointer-events` are
+disabled, and the sequence playhead stops extrapolating. Without the timeout a poll to a
+box whose power has been cut sits in the OS connect timeout for a minute or more while the
+page goes on claiming `healthy` — which is exactly what it did before.
+
+**Sequence identity** — the engine reports the name of the cue table it holds (`seq_name`)
+and of any queued replacement (`seq_queued`). The UI names the piece in both the status
+strip and the timeline header, and refetches the cue table whenever `seq_name` changes —
+so a selection made from another phone shows up too. A selection made mid‑play is reported
+as queued rather than silently leaving the timeline apparently unchanged.
 
 | Route | Purpose |
 |-------|---------|
 | `GET /` | the page |
-| `GET /api/state` | JSON snapshot: set‑points, per‑arc on/off, mode, running, `seq_t`, wifi/ssid/ip, fault, uptime |
-| `POST /api/set` | write one channel's brightness and/or speed |
+| `GET /api/state` | JSON snapshot: set‑points (`speed` in Hz), per‑arc on/off, mode, running, `seq_t`, `seq_name`/`seq_queued`, wifi/ssid/ip/host, fault, uptime |
+| `POST /api/set` | write one channel's `brightness` (0..255) and/or `speed` (**Hz**, clamped to 0 or 60..8000) |
 | `POST /api/arc` | per‑arc kill switch (runtime only, not saved) |
 | `GET /api/sequence` | the engine's current cue table (timeline view) |
 | `GET /api/seqs` | list stored sequences + the active slot |

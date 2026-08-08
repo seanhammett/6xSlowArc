@@ -38,6 +38,13 @@ With them blank (or if the join fails) the box raises a SoftAP **`SlowArc-Setup`
 
 Tunables live in [`src/config.h`](src/config.h); GPIO in [`src/pins.h`](src/pins.h).
 
+## Web UI without the hardware
+
+[`mock/index.html`](mock/README.md) is the real UI (lifted verbatim from
+`WebUi.cpp`) driven by a simulated box, for demos and screen recordings when the
+rig isn't on the bench. Open it straight from disk — no server, no ESP32.
+Regenerate after any UI change with `python3 tools/make_mock_ui.py`.
+
 ## Operating modes
 
 - **Gallery** (default): each channel holds its commissioned brightness/speed.

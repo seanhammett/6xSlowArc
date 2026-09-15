@@ -37,7 +37,7 @@
     fault:      0,                                // 0 none, 2 DAC, 3 motor, 4 supply
     wifi:       'station',                        // station | ap | connecting
     ssid:       'Gallery-WiFi',
-    ip:         '192.168.1.57',
+    ip:         '192.168.1.XX',
     host:       'slow-arc.local',
     powered:    true,                             // false = box switched off
     uptimeBase: 3617,                             // "has been up a while"

@@ -35,7 +35,8 @@ bool BulbController::begin() {
   for (uint8_t ch = 0; ch < NUM_CHANNELS; ++ch) {
     current_[ch]   = 0.0f;
     target_[ch]    = 0;
-    releaseAt_[ch] = now + (uint32_t)ch * BULB_STAGGER_MS;
+    holdFromMs_[ch] = now;
+    holdMs_[ch]     = (uint32_t)ch * BULB_STAGGER_MS;
     writeChannel(ch, 0);
   }
   lastUpdateMs_ = now;
@@ -68,10 +69,11 @@ void BulbController::setTarget(uint8_t ch, uint8_t value) {
     uint8_t pending = 0;
     for (uint8_t c = 0; c < NUM_CHANNELS; ++c) {
       if (c == ch) continue;
-      bool risingOrHeld = (current_[c] < target_[c]) || (now < releaseAt_[c]);
+      bool risingOrHeld = (current_[c] < target_[c]) || held(c, now);
       if (risingOrHeld) ++pending;
     }
-    releaseAt_[ch] = now + (uint32_t)pending * BULB_STAGGER_MS;
+    holdFromMs_[ch] = now;
+    holdMs_[ch]     = (uint32_t)pending * BULB_STAGGER_MS;
   }
   target_[ch] = value;
 }
@@ -92,7 +94,7 @@ void BulbController::update() {
   for (uint8_t ch = 0; ch < NUM_CHANNELS; ++ch) {
     float tgt = (float)target_[ch];
     if (current_[ch] < tgt) {
-      if (now < releaseAt_[ch]) continue;        // staggered hold-off
+      if (held(ch, now)) continue;               // staggered hold-off
       current_[ch] = min(tgt, current_[ch] + maxStep);
     } else if (current_[ch] > tgt) {
       current_[ch] = max(tgt, current_[ch] - maxStep);
@@ -106,7 +108,7 @@ void BulbController::update() {
 void BulbController::allOff() {
   for (uint8_t ch = 0; ch < NUM_CHANNELS; ++ch) {
     target_[ch]    = 0;
-    releaseAt_[ch] = 0;
+    holdMs_[ch]    = 0;
   }
   // Leave update() to ramp them down smoothly; callers that need an instant kill
   // lose the rail anyway.

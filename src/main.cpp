@@ -19,10 +19,17 @@
 // gallery healthy; fast blue blink = performance armed; slow blue pulse =
 // performance running; amber pulse = WiFi connecting; fast blue pulse = OTA;
 // red blink = fault, blink count encodes the subsystem (2 = bulb/DAC, 3 =
-// motor, 4 = supply/brownout).
+// motor, 4 = supply/brownout). A short white blip every 2 s is laid over any of
+// these while the web has overridden the mode switch.
+//
+// MODE + PLAYBACK OWNERSHIP: model.mode is the box's mode. The front-panel switch
+// and the web page both change it and the last change wins — the switch acts on
+// its flip, not its position — so a box mounted out of reach is fully driven
+// from the web. Boot restores the saved mode, stopped; nothing auto-plays.
 //
 
 #include <Arduino.h>
+#include <atomic>
 #include <esp_task_wdt.h>
 #include <esp_system.h>
 
@@ -68,6 +75,13 @@ static uint16_t effSpeedHz_[NUM_CHANNELS];
 // disabled arc is forced dark/stopped whatever the mode; set-points are untouched.
 static bool arcOn_[NUM_CHANNELS] = { true, true, true, true, true, true };
 
+// Mode / playback commands from the web page. The handlers run on the async web
+// task, so they only post here; loop() consumes them and alone touches the
+// engine. -1 = nothing pending.
+static std::atomic<int8_t> webMode_{-1};    // (int8_t)Mode
+static std::atomic<int8_t> webRun_{-1};     // 0 = stop, 1 = play
+static std::atomic<int8_t> webSeqSlot_{-1}; // stored slot to hand to the engine
+
 // -------------------------------------------------------------------------
 // Watchdog. A hang resets the chip; the EN pull-ups then hold the motors
 // disabled (safe state) and the DAC simply stops being driven.
@@ -88,10 +102,14 @@ static void watchdogBegin() {
 }
 
 // The current fault to present: a real hardware fault wins; otherwise a recent
-// brownout is surfaced for a short window after boot.
+// brownout is surfaced for a short window after boot. The flag is dropped once
+// the window has passed, or millis() wrapping (49.7 days) would raise it again.
 static Fault currentFault() {
   if (hwFault_ != Fault::None) return hwFault_;
-  if (brownoutReported_ && millis() < brownoutClearMs_) return Fault::Supply;
+  if (brownoutReported_) {
+    if (millis() < brownoutClearMs_) return Fault::Supply;
+    brownoutReported_ = false;
+  }
   return Fault::None;
 }
 
@@ -124,8 +142,10 @@ static String buildStateJson() {
   j += "],";
 
   j += "\"mode\":\"";
-  j += (inputs.mode() == Mode::Performance) ? "Performance" : "Gallery";
+  j += (model.mode == Mode::Performance) ? "Performance" : "Gallery";
   j += "\",";
+  // The switch says something other than the box is doing (web overrode it).
+  j += "\"override\":"; j += (inputs.mode() != model.mode) ? "true" : "false"; j += ',';
   j += "\"running\":"; j += sequence.running() ? "true" : "false"; j += ',';
   j += "\"seq_t\":"; j += sequence.positionMs(); j += ',';
   // Which piece is loaded, and which one is waiting for the next button push.
@@ -160,7 +180,8 @@ static String buildStateJson() {
 }
 
 // Hand a stored sequence to the engine: live when stopped, or queued for the
-// next button push while running. Fired by the web UI on select/save-active.
+// next button push while running. Loop task only — the web UI's select /
+// save-active posts the slot to webSeqSlot_ and loop() calls this.
 static void onSequenceActivated(uint8_t slot) {
   SeqDef def;
   if (seqStore.load(slot, def)) sequence.apply(def);
@@ -184,6 +205,13 @@ static String buildSequenceJson() {
   }
   j += "]}";
   return j;
+}
+
+// Change the box's mode, persisting only a real change (debounced NVS commit).
+static void setMode(Mode m) {
+  if (m == model.mode) return;
+  model.mode = m;
+  configStore.markDirty();
 }
 
 // -------------------------------------------------------------------------
@@ -235,7 +263,9 @@ void setup() {
               [](const String& ssid, const String& pass) {
                 network.setCredentials(ssid, pass);   // NVS + immediate attempt
               },
-              onSequenceActivated);
+              [](uint8_t slot) { webSeqSlot_ = (int8_t)slot; },
+              [](Mode m) { webMode_ = (int8_t)m; },
+              [](bool on) { webRun_ = on ? 1 : 0; });
 
   watchdogBegin();
 }
@@ -244,13 +274,27 @@ void setup() {
 void loop() {
   inputs.update();
 
-  // Mode follows the physical switch; persist it when it changes so status/boot
-  // reporting stays in sync (the switch is authoritative for live operation).
-  Mode mode = inputs.mode();
-  if (mode != model.mode) {
-    model.mode = mode;
-    configStore.markDirty();
+  // Mode: last change wins between a switch flip and the web page.
+  if (inputs.modeChanged()) setMode(inputs.mode());
+  int8_t wm = webMode_.exchange(-1);
+  if (wm >= 0) setMode(wm == (int8_t)Mode::Performance ? Mode::Performance : Mode::Gallery);
+
+  // A sequence selected or re-saved on the web. Before playback, so a selection
+  // made just ahead of Play is the piece that starts.
+  int8_t ws = webSeqSlot_.exchange(-1);
+  if (ws >= 0) onSequenceActivated((uint8_t)ws);
+
+  // Web playback. Play implies Performance, so it works from Gallery in one tap,
+  // and is a no-op while already playing so a double tap can't restart the piece.
+  int8_t wr = webRun_.exchange(-1);
+  if (wr == 1) {
+    setMode(Mode::Performance);
+    if (!sequence.running()) sequence.start();
+  } else if (wr == 0 && sequence.running()) {
+    sequence.stop();
   }
+
+  Mode mode = model.mode;
 
   // Decide the effective targets for this tick.
   if (mode == Mode::Performance) {
@@ -288,22 +332,25 @@ void loop() {
   bulbs.update();
   motors.update();
 
-  // Status LED: fault > OTA > WiFi-connecting > operational.
+  // Status LED: fault > OTA > performance > WiFi-connecting > gallery. Performance
+  // outranks WiFi so a venue without the stored network (a join attempt every
+  // 45 s) can't hide armed/running from the operator; the web page shows WiFi.
   Fault f = currentFault();
   if (f != Fault::None) {
     statusLed.set(LedState::Fault, f);
   } else if (ota.inProgress()) {
     statusLed.set(LedState::Ota);
-  } else if (network.connecting()) {
-    statusLed.set(LedState::WifiConnecting);
   } else if (mode == Mode::Performance) {
-    // Blue the moment the switch moves, so the operator gets feedback from the
-    // switch itself rather than only from the arcs once a piece is under way.
+    // Blue the moment the mode changes (switch or web), so the operator gets
+    // feedback at once rather than only from the arcs once a piece is under way.
     statusLed.set(sequence.running() ? LedState::PerformanceRun
                                      : LedState::PerformanceIdle);
+  } else if (network.connecting()) {
+    statusLed.set(LedState::WifiConnecting);
   } else {
     statusLed.set(LedState::GalleryHealthy);
   }
+  statusLed.setOverride(inputs.mode() != mode);
   statusLed.update();
 
   // Networking + remote services (all non-blocking).
@@ -314,8 +361,10 @@ void loop() {
   // Debounced NVS commit.
   configStore.tick();
 
-  // Re-subscribe to the watchdog once an aborted OTA hands control back.
+  // An aborted OTA hands control back: re-subscribe to the watchdog and undo the
+  // safe-state onStart put the drivers in (a successful OTA reboots instead).
   if (!ota.inProgress() && !wdtSubscribed_) {
+    motors.enable();
     esp_task_wdt_add(NULL);
     wdtSubscribed_ = true;
   }

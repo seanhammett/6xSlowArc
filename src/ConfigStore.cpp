@@ -96,6 +96,10 @@ void ConfigStore::flush() {
 void ConfigStore::save() {
   if (!model_) return;
 
+  // Clear before the snapshot, not after the write: a web write landing while
+  // this commit is in flight re-marks the store and is saved on a later tick.
+  dirty_ = false;
+
   StoredConfig blob{};
   blob.version = BLOB_VERSION;
   for (uint8_t i = 0; i < NUM_CHANNELS; ++i) {
@@ -108,6 +112,4 @@ void ConfigStore::save() {
   prefs.begin(NVS_NAMESPACE, /*readOnly=*/false);
   prefs.putBytes(NVS_KEY_BLOB, &blob, sizeof(blob));
   prefs.end();
-
-  dirty_ = false;
 }

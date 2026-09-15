@@ -33,7 +33,8 @@
     brightness: [184, 168, 205, 150, 176, 193],   // 0..255, as NVS holds them
     speedHz:    [420, 560, 380, 640, 500, 300],   // step rate, Hz
     on:         [1, 1, 1, 1, 1, 1],               // per-arc kill switches
-    mode:       'Gallery',
+    mode:       'Gallery',                        // the box's mode (model.mode)
+    switchPos:  'Gallery',                        // where the panel switch sits
     fault:      0,                                // 0 none, 2 DAC, 3 motor, 4 supply
     wifi:       'station',                        // station | ap | connecting
     ssid:       'Gallery-WiFi',
@@ -144,6 +145,7 @@
       speed: dev.speedHz.slice(),
       on: dev.on.slice(),
       mode: dev.mode,
+      override: dev.mode !== dev.switchPos,
       running: eng.running,
       seq_t: engPosMs(),
       seq_name: eng.name,
@@ -234,6 +236,31 @@
       return json({ ok: true });
     },
 
+    // Mode + playback, as main.cpp's loop applies them: last change wins against
+    // the switch, leaving Performance stops the engine, Play implies Performance
+    // and doesn't restart a piece already playing.
+    'POST /api/mode': q => {
+      const m = q.get('m');
+      if (m !== 'Gallery' && m !== 'Performance')
+        return text('m must be Gallery or Performance', 400);
+      dev.mode = m;
+      if (m === 'Gallery') eng.running = false;
+      syncPanel();
+      return json({ ok: true });
+    },
+
+    'POST /api/run': q => {
+      if (!q.has('on')) return text('missing on', 400);
+      if (parseInt(q.get('on'), 10) !== 0) {
+        dev.mode = 'Performance';
+        if (!eng.running) engStart();
+      } else {
+        eng.running = false;
+      }
+      syncPanel();
+      return json({ ok: true });
+    },
+
     'POST /api/arc': q => {
       if (!q.has('ch') || !q.has('on')) return text('missing ch/on', 400);
       const ch = parseInt(q.get('ch'), 10);
@@ -294,8 +321,8 @@
   function syncPanel() {
     if (!panel) return;
     const set = (id, on) => panel.querySelector(id).classList.toggle('on', on);
-    set('#mkGallery', dev.mode === 'Gallery');
-    set('#mkPerf',    dev.mode === 'Performance');
+    set('#mkGallery', dev.switchPos === 'Gallery');     // the switch, not the mode —
+    set('#mkPerf',    dev.switchPos === 'Performance'); // the web can override it
     set('#mkSta',     dev.wifi === 'station' || dev.wifi === 'connecting');
     set('#mkAp',      dev.wifi === 'ap');
     set('#mkOn',      dev.powered);
@@ -392,12 +419,19 @@
     document.body.appendChild(pill);
 
     const on = (id, fn) => panel.querySelector(id).addEventListener('click', fn);
+    // A flip sets the mode (last change wins); re-clicking the current position
+    // is no flip, just as a switch already there can't be thrown again.
     on('#mkGallery', () => {
-      dev.mode = 'Gallery';
+      if (dev.switchPos === 'Gallery') return;
+      dev.switchPos = dev.mode = 'Gallery';
       eng.running = false;            // main.cpp stops the engine leaving Performance
       syncPanel();
     });
-    on('#mkPerf',  () => { dev.mode = 'Performance'; syncPanel(); });
+    on('#mkPerf', () => {
+      if (dev.switchPos === 'Performance') return;
+      dev.switchPos = dev.mode = 'Performance';
+      syncPanel();
+    });
     on('#mkPress', () => { eng.running ? (eng.running = false) : engStart(); syncPanel(); });
     on('#mkSta',   () => { dev.wifi = 'station'; dev.ip = '192.168.1.57'; syncPanel(); });
     on('#mkAp',    () => { dev.wifi = 'ap'; syncPanel(); });

@@ -157,6 +157,13 @@ void StatusLed::update() {
     }
   }
 
+  // Override blip: brief full white on top of the state. Short and sparse so the
+  // state underneath (including a fault's blink count) still reads between blips.
+  if (override_) {
+    const uint32_t blipMs = 70, periodMs = 2000;
+    if (millis() % periodMs < blipMs) { r = g = b = 255; k = 1.0f; }
+  }
+
   // WS2812 wants G,R,B order. Keep the scaled values for the rgb() mirror.
   lastR_ = scale(r, k);
   lastG_ = scale(g, k);

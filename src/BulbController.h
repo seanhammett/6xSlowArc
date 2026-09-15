@@ -46,11 +46,19 @@ class BulbController {
   void writeChannel(uint8_t ch, uint16_t milliVolts);
   uint16_t levelToMilliVolts(float level0to255) const;
 
+  // Stagger hold: is channel ch still held off at `now`? Measured as elapsed
+  // time against a duration, not "now < deadline", so it stays correct when
+  // millis() wraps (49.7 days) instead of holding the channel for weeks.
+  bool held(uint8_t ch, uint32_t now) const {
+    return (uint32_t)(now - holdFromMs_[ch]) < holdMs_[ch];
+  }
+
   DFRobot_GP8403* dac_[3] = {nullptr, nullptr, nullptr};
   bool     boardOk_[3] = {false, false, false};
   float    current_[NUM_CHANNELS]  = {0};   // ramped value, 0..255
   uint8_t  target_[NUM_CHANNELS]   = {0};
-  uint32_t releaseAt_[NUM_CHANNELS] = {0};  // channel held until this time (stagger)
+  uint32_t holdFromMs_[NUM_CHANNELS] = {0}; // stagger hold: when it started...
+  uint32_t holdMs_[NUM_CHANNELS]     = {0}; // ...and how long (0 = not held)
   uint32_t lastUpdateMs_ = 0;
   bool     ok_ = false;
 };

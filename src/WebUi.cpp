@@ -53,6 +53,11 @@ const char kIndexHtml[] PROGMEM = R"HTML(
   .pwr{margin-top:.4rem;font-size:.7rem;padding:.15rem .4rem;border-radius:6px;cursor:pointer;background:#1e2128;border:1px solid #445;width:3rem}
   .pwr.on{color:#3c6;border-color:#3c6}
   .pwr.off{color:#e54;border-color:#e54}
+  .seg{display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;margin-top:.5rem}
+  .seg button.on{border-color:#9ad;color:#fff;background:#34405a}
+  #playbtn{min-width:5.5rem}
+  #playbtn.run{border-color:#3c6;color:#3c6}
+  #ovmsg{font-size:.85rem;color:#fb4}
   .dot{display:inline-block;width:.6rem;height:.6rem;border-radius:50%;margin-right:.3rem;vertical-align:middle}
   .ok{background:#3c6}.warn{background:#fb4}.bad{background:#e54}
   summary{cursor:pointer}
@@ -104,6 +109,15 @@ const char kIndexHtml[] PROGMEM = R"HTML(
  <button class="tab" onclick="tab(1)">Sequences</button>
 </div>
 <div id="tab0">
+<div class="card" id="playcard">
+ <b>Playback</b> — the same job as the front-panel switch and button
+ <div class="seg">
+  <button id="mdG" onclick="setMode('Gallery')">Gallery</button>
+  <button id="mdP" onclick="setMode('Performance')">Performance</button>
+  <button id="playbtn" onclick="playStop()">▶ Play</button>
+ </div>
+ <div id="ovmsg"></div>
+</div>
 <div class="card" id="seqcard" style="display:none">
  <b>Sequence</b> <span id="seqinfo"></span> <span id="seqtime"></span>
  <canvas id="seqcv" height="132"></canvas>
@@ -125,7 +139,7 @@ const char kIndexHtml[] PROGMEM = R"HTML(
 </div>
 <div id="tab1" style="display:none">
 <div class="card">
- <b>Active sequence</b> — plays on the next button push
+ <b>Active sequence</b> — plays on the next Play or button push
  <div class="wrow"><select id="seqsel" onchange="selSeq()"></select><span id="selmsg"></span></div>
 </div>
 <div class="card">
@@ -218,6 +232,21 @@ function togglePwr(i){
   setPwr(i,on);                                  // optimistic; poll re-syncs
   post(`/api/arc?ch=${i}&on=${on?1:0}`);
 }
+// Mode + playback. Re-poll straight after so the card confirms at once rather
+// than on the next 2 s tick; the poll is what the buttons show, never a guess.
+let curRun=false;
+function paintPlay(mode,running,ovr){
+  curRun=running;
+  document.getElementById('mdG').classList.toggle('on',mode==='Gallery');
+  document.getElementById('mdP').classList.toggle('on',mode==='Performance');
+  const pb=document.getElementById('playbtn');
+  pb.textContent=running?'■ Stop':'▶ Play';
+  pb.classList.toggle('run',running);
+  document.getElementById('ovmsg').textContent=ovr
+    ?`The front-panel switch is set to ${mode==='Gallery'?'Performance':'Gallery'} — the web setting is in charge until the switch is next flipped.`:'';
+}
+async function setMode(m){await post(`/api/mode?m=${m}`);poll();}
+async function playStop(){await post(`/api/run?on=${curRun?0:1}`);poll();}
 async function scan(){
   const nets=document.getElementById('nets');nets.textContent='scanning…';
   for(let t=0;t<15;t++){
@@ -438,6 +467,7 @@ function renderOffline(){
 function goOffline(){
   offline=true;seqLive=false;                    // freeze the timeline, don't extrapolate
   document.getElementById('rack').classList.add('stale');
+  document.getElementById('playcard').classList.add('stale');
   renderOffline();
   if(seq)drawSeq();
 }
@@ -449,6 +479,7 @@ async function poll(){
     lastOkMs=Date.now();
     offline=false;seqLive=true;
     document.getElementById('rack').classList.remove('stale');
+    document.getElementById('playcard').classList.remove('stale');
     const hl=d.fault?`<span class="dot bad"></span>FAULT ${d.fault}`
        :`<span class="dot ok"></span>healthy`;
     // Name the active piece here too: it is the one place visible in both modes,
@@ -464,6 +495,7 @@ async function poll(){
       `<div>Uptime: <b>${d.uptime}s</b></div>`;
     document.getElementById('wsum').textContent=
       `${d.wifi}${d.ssid?' · '+d.ssid:''}${d.ip?' · '+d.ip:''}${d.host?' · '+d.host:''}`;
+    paintPlay(d.mode,d.running,!!d.override);
     const sc=document.getElementById('seqcard');
     sc.style.display=(d.mode==='Performance')?'':'none';
     seqRun=d.running;seqT=d.seq_t;seqAt=performance.now();
@@ -519,7 +551,9 @@ void WebUi::begin(ChannelModel* model, ConfigStore* store, SequenceStore* seqSto
                   std::function<String()> stateJson,
                   std::function<String()> sequenceJson,
                   std::function<void(const String&, const String&)> onWifiCredentials,
-                  std::function<void(uint8_t)> onSequenceActivated) {
+                  std::function<void(uint8_t)> onSequenceActivated,
+                  std::function<void(Mode)> onMode,
+                  std::function<void(bool)> onRun) {
   model_        = model;
   store_        = store;
   seqStore_     = seqStore;
@@ -528,6 +562,8 @@ void WebUi::begin(ChannelModel* model, ConfigStore* store, SequenceStore* seqSto
   sequenceJson_ = sequenceJson;
   wifiCreds_    = onWifiCredentials;
   seqActivated_ = onSequenceActivated;
+  onMode_       = onMode;
+  onRun_        = onRun;
 
   server.on("/", HTTP_GET, [](AsyncWebServerRequest* req) {
     req->send_P(200, "text/html", kIndexHtml);
@@ -662,6 +698,25 @@ void WebUi::begin(ChannelModel* model, ConfigStore* store, SequenceStore* seqSto
       changed = true;
     }
     if (changed) store_->markDirty();   // debounced commit happens in main loop
+    req->send(200, "application/json", "{\"ok\":true}");
+  });
+
+  // POST /api/mode?m=Gallery|Performance — the web half of "last change wins"
+  // with the front-panel switch, so a box out of reach can still change mode.
+  server.on("/api/mode", HTTP_POST, [this](AsyncWebServerRequest* req) {
+    String m = req->hasParam("m") ? req->getParam("m")->value() : String();
+    if (m != "Gallery" && m != "Performance") {
+      req->send(400, "text/plain", "m must be Gallery or Performance");
+      return;
+    }
+    if (onMode_) onMode_(m == "Performance" ? Mode::Performance : Mode::Gallery);
+    req->send(200, "application/json", "{\"ok\":true}");
+  });
+
+  // POST /api/run?on=0|1 — stop / play the active sequence, as the button does.
+  server.on("/api/run", HTTP_POST, [this](AsyncWebServerRequest* req) {
+    if (!req->hasParam("on")) { req->send(400, "text/plain", "missing on"); return; }
+    if (onRun_) onRun_(req->getParam("on")->value().toInt() != 0);
     req->send(200, "application/json", "{\"ok\":true}");
   });
 

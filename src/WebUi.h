@@ -7,10 +7,12 @@
 //   GET  /api/state        JSON snapshot of the 12 set-points + system state
 //   POST /api/set          write one channel's brightness and/or speed
 //   POST /api/arc          per-arc on/off kill switch (runtime only, not saved)
+//   POST /api/mode         set Gallery / Performance (last change wins vs switch)
+//   POST /api/run          play / stop the active sequence (play implies Performance)
 //   GET  /api/sequence     the engine's current cue table (timeline view)
 //   GET  /api/seqs         list stored sequences + the active slot
 //   GET  /api/seq?i=N      one stored sequence definition (steps, seconds)
-//   POST /api/seq/select   make slot N active (plays on next button push)
+//   POST /api/seq/select   make slot N active (plays on next Play / button push)
 //   POST /api/seq/save     save a sequence (name, ramp, steps)
 //   GET  /api/scan         async WiFi scan (202 while running, 200 + list done)
 //   POST /api/wifi         store station credentials (forwarded via callback)
@@ -40,12 +42,16 @@ class WebUi {
   // onWifiCredentials receives (ssid, pass) from the WiFi setup card.
   // onSequenceActivated fires when the active sequence changes (selection, or
   // a save that touches the active slot) so main can hand it to the engine.
+  // onMode / onRun receive mode and play/stop commands. All three run on the
+  // web task, so main queues them for its loop rather than acting on them here.
   void begin(ChannelModel* model, ConfigStore* store, SequenceStore* seqStore,
              bool* arcEnabled,
              std::function<String()> stateJson,
              std::function<String()> sequenceJson,
              std::function<void(const String&, const String&)> onWifiCredentials,
-             std::function<void(uint8_t)> onSequenceActivated);
+             std::function<void(uint8_t)> onSequenceActivated,
+             std::function<void(Mode)> onMode,
+             std::function<void(bool)> onRun);
 
  private:
   ChannelModel*           model_ = nullptr;
@@ -56,4 +62,6 @@ class WebUi {
   std::function<String()> sequenceJson_;
   std::function<void(const String&, const String&)> wifiCreds_;
   std::function<void(uint8_t)> seqActivated_;
+  std::function<void(Mode)>    onMode_;
+  std::function<void(bool)>    onRun_;
 };

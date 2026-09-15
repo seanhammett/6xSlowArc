@@ -27,6 +27,8 @@ void InputManager::update() {
   seqButton.update();
 
   mode_ = modeSwitch.read() == LOW ? Mode::Performance : Mode::Gallery;
+  // attach() sampled the pin, so boot doesn't read as a flip.
+  modeChanged_ = modeSwitch.changed();
 
   // Active-LOW momentary button -> falling edge is a press.
   seqPressed_ = seqButton.fell();

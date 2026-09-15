@@ -78,6 +78,8 @@ Suggested module breakdown:
 
 Mode switch selects between the two. Switching to Gallery should cleanly hand control back to the static set-points.
 
+*Revision (ceiling install):* the front panel may be out of reach, so the web UI can also set the mode and play/stop the sequence. Last change wins between the switch (on its flip) and the web; the saved mode is restored at boot, stopped. The status LED overlays a white blip while the switch position disagrees with the actual mode.
+
 ---
 
 ## 6. Control source & persistence

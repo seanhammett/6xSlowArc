@@ -49,6 +49,11 @@ class MotorController {
   // Called on fault and before a deliberate reset.
   void emergencyStop();
 
+  // Undo emergencyStop(): re-enable the drivers of the channels that initialised.
+  // Pulses resume from the MIN ramp on the next update(). Used when an aborted
+  // OTA hands control back without the reboot that would otherwise do this.
+  void enable();
+
   uint32_t targetHz(uint8_t ch) const { return ch < NUM_CHANNELS ? targetHz_[ch] : 0; }
   uint32_t commandedHz(uint8_t ch) const { return ch < NUM_CHANNELS ? commandedHz_[ch] : 0; }
   bool     channelOk(uint8_t ch) const { return ch < NUM_CHANNELS && channelOk_[ch]; }

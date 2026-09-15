@@ -20,8 +20,8 @@ There are only three things on the outside:
 
 | | What it does |
 |---|---|
-| **Mode switch** | Chooses Gallery or Performance (see below). This switch always wins — the web page cannot override it. |
-| **Sequence button** | In Performance mode, starts and stops the choreography. Does nothing in Gallery mode. |
+| **Mode switch** | Chooses Gallery or Performance (see below). The web page can do the same; whichever was used most recently is in charge. |
+| **Sequence button** | In Performance mode, starts and stops the choreography. Does nothing in Gallery mode. The web page's Play / Stop button does the same. |
 | **Status light** | A small coloured light telling you the box is healthy. See §5. |
 
 ---
@@ -37,7 +37,10 @@ Switch on the power. Then:
 4. The light settles into a **slow green pulse**. The box is running normally.
 
 Everything comes back exactly as you left it. Brightness, speed, mode, and your
-sequences are all remembered through a power cut.
+sequences are all remembered through a power cut — including a mode chosen on the web
+page, whatever the switch says. A sequence that was playing does **not** restart by
+itself: the box comes back in Performance, waiting, until someone presses Play or the
+sequence button.
 
 **One exception:** if you switched any arcs off from the web page, they come back **on**
 after a power cycle. That is intentional — a box restarting overnight shouldn't come
@@ -47,18 +50,28 @@ back with an arc dark that nobody notices.
 
 ## 3. The two modes
 
-Set with the physical switch on the box.
+Set with the physical switch on the box **or** the Gallery / Performance buttons at the
+top of the web page's Control tab. Whichever was used last is in charge, so a box mounted
+out of reach can be run entirely from the page (§6).
 
 **Gallery** — each arc simply holds its own settings. Arc 1 stays at its brightness and
 speed, arc 2 at its own, and so on, indefinitely. This is the normal day-to-day mode.
 
 **Performance** — the box plays a **sequence**: a timed piece where arcs fade in and out
-in a set order. The status light turns blue and blinks the moment you move the switch,
-which is your confirmation it has taken. Press the sequence button to start the piece;
-press again to stop.
+in a set order. The status light turns blue and blinks the moment the mode changes,
+which is your confirmation it has taken. Press the sequence button (or **Play** on the
+page) to start the piece; press again (or **Stop**) to stop. Play on the page also
+switches to Performance if the box was in Gallery.
 
 When you stop a sequence, the arcs **hold wherever they are** rather than jumping back.
-Flip the switch to Gallery to return them to their normal settings.
+Switch to Gallery to return them to their normal settings.
+
+**When the page overrides the switch.** If the page sets a mode different from where the
+switch sits, the page wins until the switch is next flipped. The switch then no longer
+shows the box's real mode, so the status light adds a **brief white blip every two
+seconds** on top of its normal pattern, and the page says which way the switch is set.
+Either flip the switch (twice, if it has to end up where it already is) or choose the mode
+on the page that matches the switch, and the blip stops.
 
 ---
 
@@ -100,9 +113,10 @@ on site.
 | Amber pulsing | Looking for WiFi. Harmless — the arcs run regardless. |
 | Fast blue flicker | A software update is being installed. Do not cut the power. |
 | **Red flashes** | A fault. **Count the flashes** — see below. |
+| White blip every 2 s, on top of any of the above | The web page has overridden the mode switch — the switch isn't showing the real mode. See §3. |
 
-The light turns blue the instant you move the switch to Performance, so you can
-confirm the switch has taken without waiting to see what the arcs do. It blinks
+The light turns blue the instant the box goes into Performance, so you can
+confirm the change has taken without waiting to see what the arcs do. It blinks
 on and off while waiting and settles into a smooth breathing pulse once a
 sequence is playing. (The blue flicker of a software update never goes fully
 dark — that is how you tell the two apart, and updates only happen when someone
@@ -124,6 +138,11 @@ is worth mentioning but not urgent.
 
 The top strip is the box's status at a glance: healthy or faulty, which mode, which
 sequence is selected and whether it is running, the WiFi, and how long it has been on.
+
+Under the tabs, the **Playback** card does the job of the front panel: **Gallery** and
+**Performance** choose the mode, and **▶ Play / ■ Stop** starts and stops the selected
+sequence. The highlighted button is the box's current mode. If the page has overridden
+the switch, an amber line says so (§3).
 
 If the strip turns red and says **OFFLINE**, the page has lost contact with the box —
 it has been powered down, or your phone has left the network. The sliders below grey
@@ -166,7 +185,7 @@ line is the current position, sweeping left to right and looping. The header nam
 piece being drawn and shows how far through you are — `5:32 / 11:08` above.
 
 If you pick a different sequence while one is playing, the header says so —
-*"FAST" starts on the next press*. The drawing keeps showing the piece that is
+*"FAST" starts on the next press* (of Play or the sequence button). The drawing keeps showing the piece that is
 actually playing until you stop and start it again. Nothing has been lost; the box
 is just refusing to cut a piece off part-way through.
 
@@ -183,7 +202,7 @@ any time without touching the choreography.
 Three sections.
 
 **Active sequence** — pick which piece plays. If a sequence is playing when you change
-this, the new one starts at the **next** press of the sequence button, so you never cut a
+this, the new one starts at the **next** press of Play or the sequence button, so you never cut a
 piece off mid-way. The line under the menu tells you which of the two happened, and the
 Control tab names the selected piece in its status strip.
 
@@ -264,11 +283,15 @@ thing. Report the number.
 **Everything is dark after a power cut.** Give it a minute. The bulbs fade up slowly and
 deliberately on every start.
 
-**The sequence won't start.** Check the mode switch is on Performance — the button does
-nothing in Gallery mode.
+**The sequence won't start.** Check the mode is Performance — the sequence button does
+nothing in Gallery mode. **Play** on the page works from either mode.
+
+**The mode switch seems to do nothing, or the light has a white blip.** The page has set
+the mode since the switch was last moved. The switch takes over again as soon as it is
+flipped — if it is already where you want it, flip it away and back.
 
 **A sequence you saved isn't playing.** Saving a sequence doesn't select it. Go to the
-Sequences tab and choose it under *Active sequence*, then press the sequence button.
+Sequences tab and choose it under *Active sequence*, then press Play or the sequence button.
 
 ---
 
@@ -281,6 +304,7 @@ Sequences tab and choose it under *Active sequence*, then press the sequence but
 | Page address on gallery WiFi | `http://slow-arc.local` (or the number on the status line) |
 | Healthy light | slow green pulse (Gallery), blue blinking (Performance, waiting), slow blue pulse (sequence playing) |
 | Red 2 / 3 / 4 flashes | bulb / motor / power |
+| White blip every 2 s | web page has overridden the mode switch |
 | Settings saved automatically | yes — brightness, speed, mode, sequences |
 | Survives a power cut | everything, except arcs switched off from the page |
 

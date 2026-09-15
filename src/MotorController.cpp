@@ -138,3 +138,13 @@ void MotorController::emergencyStop() {
   }
   enabled_ = false;
 }
+
+void MotorController::enable() {
+  bool any = false;
+  for (uint8_t ch = 0; ch < NUM_CHANNELS; ++ch) {
+    if (!channelOk_[ch]) continue;
+    digitalWrite(PIN_EN[ch], LOW);           // driver live (active-LOW), idle until update()
+    any = true;
+  }
+  enabled_ = any;
+}

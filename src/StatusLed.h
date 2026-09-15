@@ -20,6 +20,10 @@
 // The two "fast blue" states are told apart by shape, not rate: the armed blink
 // snaps fully dark between flashes, while OTA is a smooth glow that never is.
 //
+// Override: while the web has set a mode the physical switch doesn't show, a
+// short white blip is laid over whichever state above is on show, so anyone at
+// the panel can see the switch isn't in charge right now.
+//
 
 #include <stdint.h>
 #include "SystemState.h"
@@ -30,6 +34,9 @@ class StatusLed {
 
   // Set the presentation state. For LedState::Fault, pass the subsystem code.
   void set(LedState state, Fault fault = Fault::None);
+
+  // Lay the white override blip over the state (see header comment).
+  void setOverride(bool on) { override_ = on; }
 
   // Render the current frame. Call every loop — it rate-limits itself to the
   // pixel's refresh, so calling it faster costs nothing and changes nothing.
@@ -45,6 +52,7 @@ class StatusLed {
  private:
   LedState state_ = LedState::Boot;
   Fault    fault_ = Fault::None;
+  bool     override_ = false;
   uint8_t  lastR_ = 0, lastG_ = 0, lastB_ = 0;   // last colour shown
   uint32_t lastSendUs_ = 0;                      // when that frame went out
   bool     sent_ = false;                        // has any frame gone out yet?

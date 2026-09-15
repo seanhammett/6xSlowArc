@@ -14,7 +14,7 @@ literal in [`../src/WebUi.cpp`](../src/WebUi.cpp) and injects
 [`../tools/mock_backend.js`](../tools/mock_backend.js) ahead of the page's own
 script. The mock replaces `window.fetch` with an in-memory implementation of
 every endpoint (`/api/state`, `/api/sequence`, `/api/seqs`, `/api/seq`,
-`/api/seq/select`, `/api/seq/save`, `/api/set`, `/api/arc`, `/api/scan`,
+`/api/seq/select`, `/api/seq/save`, `/api/set`, `/api/mode`, `/api/run`, `/api/arc`, `/api/scan`,
 `/api/wifi`), including its own copy of `SequenceEngine::expand`, so what you
 record is pixel-for-pixel what the box serves.
 

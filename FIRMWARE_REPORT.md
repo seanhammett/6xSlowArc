@@ -95,9 +95,17 @@ The control loop is fully **non‑blocking**: WiFi, OTA, web, and NVS never stal
 
 ## 4. Behaviour
 
-**Modes** (physical switch is authoritative — closed = Performance, open = Gallery):
+**Modes** — `model.mode` is authoritative. The physical switch (closed = Performance,
+open = Gallery) and `POST /api/mode` both set it, **last change wins**; the switch acts on
+its *flip* (`InputManager::modeChanged()`), not its level, so a ceiling‑mounted box is
+fully web‑driven. Boot restores the saved mode, stopped — nothing auto‑plays.
 - **Gallery** — every arc holds its static set‑point.
-- **Performance** — the sequence engine drives the arcs; the button toggles run/stop.
+- **Performance** — the sequence engine drives the arcs; the button or `POST /api/run`
+  plays/stops (Play implies Performance and is a no‑op while running).
+
+Web commands are posted to atomics by the async web task and applied in `loop()`, which
+alone touches the engine. When the switch position ≠ `model.mode`, `/api/state` reports
+`"override":true` and the LED lays a white blip (70 ms every 2 s) over its state.
 
 **Persistence** — NVS is the single source of truth, in two namespaces: `slowarc` holds
 the 12 set‑points + mode as one versioned packed blob ([ConfigStore.cpp](src/ConfigStore.cpp));
@@ -139,8 +147,9 @@ an off/on cycle.
 | WiFi connecting | amber pulse |
 | OTA in progress | fast blue pulse |
 | Fault | red blink, count = subsystem (2 = bulb/DAC, 3 = motor, 4 = supply/brownout) |
+| Web override (overlay) | 70 ms white blip every 2 s on top of any state above |
 
-Performance mode goes blue on the switch edge rather than on the first sequence frame, so
+Performance mode goes blue on the mode change rather than on the first sequence frame, so
 the switch confirms itself. The two fast‑blue states differ in shape, not rate: the armed
 blink goes fully dark between flashes, the OTA pulse never does (its floor is `k = 0.10`).
 
@@ -184,8 +193,8 @@ per‑channel commissioning, and re‑commissioning retunes the piece automatica
 slot 0 with the built‑in piece **"Original"** (4 s ramp, 56 s holds: the arcs wake one at
 a time, all six hold, then fall away in the same order; the loop closes at 668 s). Saving
 by name overwrites the matching slot or takes the first free one. Selecting or re‑saving
-the active sequence hands it to the engine — live if stopped, queued for the next button
-push if running.
+the active sequence hands it to the engine — live if stopped, queued for the next Play /
+button push if running.
 
 Stop behaviour is set by `SEQUENCE_STOP_HOLD` (config.h): hold the last produced frame
 (default) or hand back to the static gallery set‑points.
@@ -196,7 +205,8 @@ Stop behaviour is set by `SEQUENCE_STOP_HOLD` (config.h): hold the last produced
 
 Single PROGMEM page, two tabs:
 
-- **Control** — per‑arc brightness/speed sliders, a typed Hz box per arc, per‑arc on/off
+- **Control** — a Playback card (Gallery / Performance, Play / Stop, override notice),
+  per‑arc brightness/speed sliders, a typed Hz box per arc, per‑arc on/off
   buttons, live status (mode, active sequence, running, WiFi, IP, fault, uptime), a
   timeline view of the running sequence, and the WiFi provisioning card.
 - **Sequences** — list/select stored sequences, preview, and create/save a new one.

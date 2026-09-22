@@ -93,9 +93,8 @@ static constexpr bool SEQUENCE_STOP_HOLD = true;
 // A SeqDef is ~8 KB at 1000 steps: never put one on a task stack.
 static constexpr uint16_t SEQ_MAX_STEPS = 1000; // steps per sequence
 static constexpr uint8_t  SEQ_SLOTS     = 8;    // stored sequence slots
-static constexpr uint32_t SEQ_TIME_RES_MS = 100;     // step/ramp times snap to 0.1 s
-static constexpr uint32_t SEQ_RAMP_MIN_MS = 100;
-static constexpr uint32_t SEQ_RAMP_MAX_MS = 600000;
+static constexpr uint32_t SEQ_TIME_RES_MS = 100;     // step/ramp/loop times snap to 0.1 s
+static constexpr uint32_t SEQ_RAMP_MAX_MS = 600000;  // per-step ramp, 0 (snap) .. 600 s
 
 // ---------------------------------------------------------------------------
 // Watchdog

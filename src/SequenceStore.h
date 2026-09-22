@@ -35,7 +35,7 @@ class SequenceStore {
   bool nameOf(uint8_t slot, char out[sizeof(SeqDef::name)]) const;
 
   // The slot as the web API's JSON, streamed from the file:
-  // {"name":..,"ramp_ms":..,"len":..,"steps":[[t_ms,mask],...]}
+  // {"name":..,"len":loop_ms,"steps":[[t_ms,mask,ramp_ms],...]}
   bool streamJson(uint8_t slot, Print& out) const;
 
   // Overwrite the slot whose stored name matches def.name, else the first free

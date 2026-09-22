@@ -10,14 +10,16 @@
 namespace {
 const char*    kNs    = "seqs";                  // NVS: active index (+ legacy blobs)
 const char*    kDir   = "/seq";
-const uint32_t kMagic = 0x32514553;              // "SEQ2" little-endian
+const uint32_t kMagic = 0x33514553;              // "SEQ3" little-endian: per-step ramps
 
-// On-flash header, followed by stepCount raw SeqStep records.
+// On-flash header, followed by stepCount raw SeqStep records. ("SEQ2" files,
+// from the first LittleFS build — one shared ramp — read as absent; begin()
+// then rebuilds from the NVS copies, which are kept for exactly this.)
 struct FileHeader {
   uint32_t magic;
   uint16_t stepCount;
   uint16_t reserved;
-  uint32_t rampMs;
+  uint32_t loopMs;
   char     name[sizeof(SeqDef::name)];
 };
 
@@ -43,24 +45,36 @@ bool openSlot(uint8_t slot, File& f, FileHeader& h) {
 
 // -------------------------------------------------------------------------
 // The NVS layout older firmware stored (SEQ_MAX_STEPS was 32, stepCount a
-// uint8_t). Only read, once, to migrate those sequences onto LittleFS.
+// uint8_t, one shared ramp, steps with no ramp of their own). Only read, to
+// migrate those sequences onto LittleFS; the blobs are left in place.
 // -------------------------------------------------------------------------
+struct LegacyStep {
+  uint32_t timeMs;
+  uint8_t  mask;
+};
 struct LegacySeqDef {
-  char     name[24];
-  uint32_t rampMs;
-  uint8_t  stepCount;
-  SeqStep  steps[32];
+  char       name[24];
+  uint32_t   rampMs;
+  uint8_t    stepCount;
+  LegacyStep steps[32];
 };
 static_assert(sizeof(LegacySeqDef) == 288, "must match the old NVS blob size");
 
 void keyFor(uint8_t slot, char out[4]) { snprintf(out, 4, "s%u", slot); }
 
+uint16_t rampToDs(uint32_t ms) {
+  uint32_t ds = (ms + 50) / 100;
+  return (uint16_t)(ds > SEQ_RAMP_MAX_MS / 100 ? SEQ_RAMP_MAX_MS / 100 : ds);
+}
+
 // -------------------------------------------------------------------------
 // Built-in piece — "Sequence - Sheet1 (1).csv": rise 4 s, hold 56 s. The arcs
 // wake one at a time, all six hold, then fall away in the same order; the loop
-// closes at 668 s (last step + ramp). Seeded into slot 0 on a fresh box; from
-// then on the artist edits/saves sequences from the web UI.
+// closes at 668 s. Seeded into slot 0 on a fresh box; from then on the artist
+// edits/saves sequences from the web UI. (sequences/Original.csv is the same.)
 // -------------------------------------------------------------------------
+const uint32_t kDefaultRampMs = 4000;
+const uint32_t kDefaultLoopMs = 668000;
 const struct { uint32_t t; uint8_t m; } kDefaultSteps[] = {
   //  t(ms)  arcs on (bit 0 = arc 1)
   {   4000, 0b000001 },
@@ -83,18 +97,22 @@ void printEscaped(Print& out, const char* s) {
     out.write(*s);
   }
 }
+
+void printStep(Print& out, const SeqStep& s) {
+  out.write('['); out.print(s.timeMs);
+  out.write(','); out.print(s.mask);
+  out.write(','); out.print(seqRampMs(s)); out.write(']');
+}
 }  // namespace
 
 void printSeqJson(Print& out, const SeqDef& d) {
   out.print("{\"name\":\"");
   printEscaped(out, d.name);
-  out.print("\",\"ramp_ms\":"); out.print(d.rampMs);
-  out.print(",\"len\":");       out.print(seqLoopLengthMs(d));
+  out.print("\",\"len\":"); out.print(seqLoopLengthMs(d));
   out.print(",\"steps\":[");
   for (uint16_t i = 0; i < d.stepCount; ++i) {
     if (i) out.write(',');
-    out.write('['); out.print(d.steps[i].timeMs);
-    out.write(','); out.print(d.steps[i].mask); out.write(']');
+    printStep(out, d.steps[i]);
   }
   out.print("]}");
 }
@@ -115,6 +133,15 @@ void SequenceStore::begin() {
   Preferences p;
   p.begin(kNs, /*readOnly=*/false);
   if (!any) {
+    // No readable sequence: a fresh box, one coming from the NVS-era firmware,
+    // or one holding only files this build can't read. Clear any such files so
+    // their slots count as free, then migrate the NVS copies or seed.
+    char path[16];
+    for (uint8_t i = 0; i < SEQ_SLOTS; ++i) {
+      pathFor(i, path);
+      if (LittleFS.exists(path)) LittleFS.remove(path);
+    }
+
     // Heap, not stack: the loop task's stack is 8 KB and a SeqDef is about that.
     SeqDef* d = new (std::nothrow) SeqDef();
     LegacySeqDef old;
@@ -124,13 +151,21 @@ void SequenceStore::begin() {
       keyFor(i, k);
       if (!p.isKey(k)) continue;
       // Size mismatch (a still older layout) reads as absent, as it always did.
-      if (p.getBytes(k, &old, sizeof(old)) == sizeof(old) && old.stepCount <= 32) {
+      if (p.getBytes(k, &old, sizeof(old)) == sizeof(old) && old.stepCount <= 32 &&
+          old.stepCount > 0) {
         memset(d, 0, sizeof(SeqDef));
         memcpy(d->name, old.name, sizeof(d->name));
         d->name[sizeof(d->name) - 1] = '\0';
-        d->rampMs    = old.rampMs;
         d->stepCount = old.stepCount;
-        memcpy(d->steps, old.steps, old.stepCount * sizeof(SeqStep));
+        // The old shared ramp becomes every step's ramp, and the loop closes
+        // where it always did: last step + ramp. Plays exactly as before.
+        uint16_t ds = rampToDs(old.rampMs);
+        for (uint8_t s = 0; s < old.stepCount; ++s) {
+          d->steps[s].timeMs = old.steps[s].timeMs;
+          d->steps[s].mask   = old.steps[s].mask;
+          d->steps[s].rampDs = ds;
+        }
+        d->loopMs = old.steps[old.stepCount - 1].timeMs + old.rampMs;
         // The old blob is left in NVS (~2.3 KB for all eight): flashing the
         // previous firmware back then still finds the artist's sequences.
         if (save(i, *d)) ++migrated;
@@ -139,12 +174,13 @@ void SequenceStore::begin() {
     if (d && migrated == 0) {
       memset(d, 0, sizeof(SeqDef));
       strlcpy(d->name, "Original", sizeof(d->name));
-      d->rampMs    = 4000;                     // shared rise/fall (ms)
       d->stepCount = sizeof(kDefaultSteps) / sizeof(kDefaultSteps[0]);
       for (uint16_t s = 0; s < d->stepCount; ++s) {
         d->steps[s].timeMs = kDefaultSteps[s].t;
         d->steps[s].mask   = kDefaultSteps[s].m;
+        d->steps[s].rampDs = rampToDs(kDefaultRampMs);
       }
+      d->loopMs = kDefaultLoopMs;
       save(0, *d);
     }
     if (migrated) Serial.printf("[seq] migrated %u sequence(s) from NVS\n", migrated);
@@ -155,10 +191,12 @@ void SequenceStore::begin() {
 }
 
 bool SequenceStore::exists(uint8_t slot) const {
-  if (!mounted_ || slot >= SEQ_SLOTS) return false;
-  char p[16];
-  pathFor(slot, p);
-  return LittleFS.exists(p);
+  if (!mounted_) return false;
+  File f;
+  FileHeader h;
+  if (!openSlot(slot, f, h)) return false;         // present AND readable
+  f.close();
+  return true;
 }
 
 bool SequenceStore::load(uint8_t slot, SeqDef& out) const {
@@ -168,7 +206,7 @@ bool SequenceStore::load(uint8_t slot, SeqDef& out) const {
   if (!openSlot(slot, f, h)) return false;
   memset(&out, 0, sizeof(SeqDef));
   memcpy(out.name, h.name, sizeof(out.name));
-  out.rampMs    = h.rampMs;
+  out.loopMs    = h.loopMs;
   out.stepCount = h.stepCount;
   size_t bytes = (size_t)h.stepCount * sizeof(SeqStep);
   bool ok = f.read((uint8_t*)out.steps, bytes) == bytes;
@@ -192,26 +230,15 @@ bool SequenceStore::streamJson(uint8_t slot, Print& out) const {
   File f;
   FileHeader h;
   if (!openSlot(slot, f, h)) return false;
-  uint32_t len = 0;
-  // The loop length needs the last step, which is at the end of the file.
-  if (h.stepCount) {
-    SeqStep lastStep;
-    f.seek(sizeof(h) + (size_t)(h.stepCount - 1) * sizeof(SeqStep));
-    if (f.read((uint8_t*)&lastStep, sizeof(lastStep)) == sizeof(lastStep))
-      len = lastStep.timeMs + h.rampMs;
-    f.seek(sizeof(h));
-  }
   out.print("{\"name\":\"");
   printEscaped(out, h.name);
-  out.print("\",\"ramp_ms\":"); out.print(h.rampMs);
-  out.print(",\"len\":");       out.print(len);
+  out.print("\",\"len\":"); out.print(h.stepCount ? h.loopMs : 0);
   out.print(",\"steps\":[");
   SeqStep s;
   for (uint16_t i = 0; i < h.stepCount; ++i) {
     if (f.read((uint8_t*)&s, sizeof(s)) != sizeof(s)) break;
     if (i) out.write(',');
-    out.write('['); out.print(s.timeMs);
-    out.write(','); out.print(s.mask); out.write(']');
+    printStep(out, s);
   }
   out.print("]}");
   f.close();
@@ -227,7 +254,7 @@ bool SequenceStore::save(uint8_t slot, const SeqDef& def) {
   FileHeader h = {};
   h.magic     = kMagic;
   h.stepCount = def.stepCount;
-  h.rampMs    = def.rampMs;
+  h.loopMs    = def.loopMs;
   memcpy(h.name, def.name, sizeof(h.name));
   h.name[sizeof(h.name) - 1] = '\0';
 

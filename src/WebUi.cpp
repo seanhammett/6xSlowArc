@@ -83,6 +83,7 @@ const char kIndexHtml[] PROGMEM = R"HTML(
   /* The step list scrolls inside the card; rows are added as it is scrolled. */
   #edwrap{max-height:24rem;overflow-y:auto}
   .step input[type=number]{width:5.5rem}
+  .step input[type=number].rp{width:4rem}
   .step .idx{color:#667;width:2.2rem;text-align:right;font-variant-numeric:tabular-nums}
   .step .tm{color:#889;width:3.6rem;font-variant-numeric:tabular-nums}
   #ederr{font-size:.85rem;color:#fb4;white-space:pre-line}
@@ -176,7 +177,8 @@ const char kIndexHtml[] PROGMEM = R"HTML(
  <b>Create / edit</b> <span id="edmsg"></span>
  <div class="wrow">
   <input type="text" id="edname" placeholder="sequence name" maxlength="23">
-  <label>ramp <input type="number" id="edramp" value="4" min="0.1" max="600" step="0.1" oninput="edDraw()"> s</label>
+  <label title="Where the piece loops. Blank = the last step plus its ramp">loop <input type="number" id="edloop" min="0" step="0.1" placeholder="auto" oninput="edDraw()"> s</label>
+  <label title="Ramp given to added steps, and to CSV rows with a blank ramp">new-step ramp <input type="number" id="edramp" value="4" min="0" max="600" step="0.1"> s</label>
   <button onclick="edLoad()">Load selected</button>
  </div>
  <div class="wrow">
@@ -324,7 +326,7 @@ function wsave(){
 const MAXSTEPS=1000;              // mirror SEQ_MAX_STEPS in config.h
 let seq=null,seqKey=0,tlCache=null,seqT=0,seqAt=0,seqRun=false,seqLive=false,seqName='',seqQueued='';
 let seqLen=0,seqRunId=0,curMode='';
-const stepsIn=a=>a.map(([t,m])=>({t,m}));   // API [[t_ms,mask],...] -> [{t,m}]
+const stepsIn=a=>a.map(([t,m,r])=>({t,m,r}));   // API [[t_ms,mask,ramp_ms],...] -> [{t,m,r}]
 async function loadSeq(){
   try{
     const d=await (await fetchT('/api/sequence')).json();
@@ -334,23 +336,26 @@ async function loadSeq(){
 function fmt(ms){const s=Math.floor(ms/1000);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')}
 // m:ss.s — step times are 0.1 s resolution.
 function fmt1(ms){const d=Math.round(ms/100),s=Math.floor(d/10);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')+'.'+(d%10)}
-// Mirror of the firmware's frame rule (SeqFrame.h): hold at t-ramp, reach the
-// step's state at t; starts and loops on the last step's state. All times ms.
-function expand(rampMs,steps){
-  if(!steps.length)return null;
-  const r=rampMs,st=[...steps].sort((a,b)=>a.t-b.t);
-  const mLast=st[st.length-1].m,len=st[st.length-1].t+r,pts=[{t:0,m:mLast}];
+// Mirror of the firmware's frame rule (SeqFrame.h): each step ramps in over its
+// own ramp, reaching its state at t; the piece starts on the last step's state,
+// holds it after the last step, and loops at len. Same-time steps: the later
+// one wins (state and ramp). All times ms.
+function expand(len,steps){
+  if(!steps.length||!len)return null;
+  const st=[];
+  for(const s of [...steps].sort((a,b)=>a.t-b.t)){if(st.length&&st[st.length-1].t===s.t)st.pop();st.push(s)}
+  const mLast=st[st.length-1].m,pts=[{t:0,m:mLast}];
   let prevM=mLast,prevT=0;
   for(const s of st){
-    pts.push({t:Math.max(prevT,s.t-r),m:prevM});
+    pts.push({t:Math.max(prevT,s.t-s.r),m:prevM});
     pts.push({t:s.t,m:s.m});prevM=s.m;prevT=s.t;
   }
   pts.push({t:len,m:mLast});
   return {len,pts};
 }
-function paintMask(ctx,W,H,rampMs,steps){
+function paintMask(ctx,W,H,len,steps){
   ctx.clearRect(0,0,W,H);
-  const ex=expand(rampMs,steps);if(!ex||!ex.len)return;
+  const ex=expand(len,steps);if(!ex||!ex.len)return;
   const laneH=H/6,x=t=>t/ex.len*W;
   for(let ch=0;ch<6;ch++){
     const y0=(ch+1)*laneH-2,hMax=laneH-6,yOf=p=>y0-((p.m>>ch)&1)*hMax;
@@ -369,10 +374,10 @@ function paintMask(ctx,W,H,rampMs,steps){
     ctx.fillStyle='#889';ctx.font='9px system-ui';ctx.fillText(ch+1,3,ch*laneH+10);
   }
 }
-function drawMask(id,rampMs,steps){
+function drawMask(id,len,steps){
   const cv=document.getElementById(id);
   if(cv.width!==cv.clientWidth)cv.width=cv.clientWidth;
-  paintMask(cv.getContext('2d'),cv.width,cv.height,rampMs,steps);
+  paintMask(cv.getContext('2d'),cv.width,cv.height,len,steps);
 }
 // The Control timeline is painted once per piece/size into an offscreen canvas;
 // the 250 ms tick only redraws the playhead over it. (1000 steps x 6 lanes is
@@ -381,7 +386,7 @@ function tlLayer(W,H){
   const k=seqKey+'|'+W+'|'+H;
   if(!tlCache||tlCache.k!==k){
     const c=document.createElement('canvas');c.width=W;c.height=H;
-    paintMask(c.getContext('2d'),W,H,seq.ramp_ms,seq.steps);
+    paintMask(c.getContext('2d'),W,H,seq.len,seq.steps);
     tlCache={k,c};
   }
   return tlCache.c;
@@ -442,8 +447,8 @@ async function loadPreview(){
   try{
     const d=await (await fetchT('/api/seq?i='+i)).json(),st=stepsIn(d.steps);
     document.getElementById('pvname').textContent=
-      `— ${d.name} · ${st.length} steps · ramp ${d.ramp_ms/1000}s · loop ${fmt1(d.len)}`;
-    drawMask('pvcv',d.ramp_ms,st);
+      `— ${d.name} · ${st.length} steps · loop ${fmt1(d.len)}`;
+    drawMask('pvcv',d.len,st);
   }catch(e){}
 }
 async function selSeq(){
@@ -458,21 +463,29 @@ async function selSeq(){
   poll();                   // …and refresh the strip now rather than in 2 s
 }
 // --- Creator ---
-// Steps are held in ms ({t,m}); inputs show seconds to 0.1 s. Rows are built in
-// batches as the list is scrolled — 1000 rows x 6 checkboxes all at once is
-// sluggish, especially on a phone.
-let ed={steps:[{t:4000,m:1}]},edShown=0;
+// Steps are held in ms ({t,m,r}: time, arcs, ramp into that state); inputs show
+// seconds to 0.1 s. Rows are built in batches as the list is scrolled — 1000
+// rows x 6 checkboxes all at once is sluggish, especially on a phone.
+let ed={steps:[{t:4000,m:1,r:4000}]},edShown=0;
 const ED_BATCH=100;
 const snap=s=>Math.max(0,Math.round((+s||0)*10))*100;         // seconds -> ms, 0.1 s
-function edRampMs(){return Math.min(600000,Math.max(100,snap(document.getElementById('edramp').value)))}
+const snapR=s=>Math.min(600000,snap(s));                       // a ramp: 0..600 s
+function edDefRamp(){return snapR(document.getElementById('edramp').value)}
+// The step that closes the piece: latest in time (the later one of a tie).
+function edLast(){let l=null;for(const s of ed.steps)if(!l||s.t>=l.t)l=s;return l}
+// Loop length: the loop box, or when it's blank the last step plus its ramp.
+function edAutoLoop(){const l=edLast();return l?l.t+l.r:0}
+function edLoopMs(){const v=document.getElementById('edloop').value.trim();return v===''?edAutoLoop():snap(v)}
 function edRow(i){
   const s=ed.steps[i],row=document.createElement('div');row.className='step';
-  row.innerHTML=`<span class="idx">${i+1}</span>t <input type="number" min="0" step="0.1" value="${s.t/1000}"> s `+
+  row.innerHTML=`<span class="idx">${i+1}</span>t <input type="number" class="tt" min="0" step="0.1" value="${s.t/1000}"> s `+
     `<span class="tm">${fmt1(s.t)}</span> arcs `+
     [0,1,2,3,4,5].map(ch=>`<label><input type="checkbox"${(s.m>>ch)&1?' checked':''}>${ch+1}</label>`).join('')+
+    ` ramp <input type="number" class="rp" min="0" max="600" step="0.1" value="${s.r/1000}"> s`+
     ` <button>✕</button>`;
-  const t=row.querySelector('input[type=number]'),tm=row.querySelector('.tm');
+  const t=row.querySelector('.tt'),tm=row.querySelector('.tm'),rp=row.querySelector('.rp');
   t.oninput=()=>{s.t=snap(t.value);tm.textContent=fmt1(s.t);edDraw()};
+  rp.oninput=()=>{s.r=snapR(rp.value);edDraw()};
   row.querySelectorAll('input[type=checkbox]').forEach((cb,ch)=>
     cb.onchange=()=>{s.m=cb.checked?s.m|(1<<ch):s.m&~(1<<ch);edDraw()});
   row.querySelector('button').onclick=()=>{ed.steps.splice(i,1);edRender(edShown)};
@@ -496,9 +509,10 @@ document.getElementById('edwrap').addEventListener('scroll',e=>{
   if(edShown<ed.steps.length&&w.scrollTop+w.clientHeight>=w.scrollHeight-200)edMore();
 });
 function edInfo(){
-  const n=ed.steps.length,last=ed.steps.reduce((a,s)=>Math.max(a,s.t),0);
-  const len=n?last+edRampMs():0;
+  const n=ed.steps.length,l=edLast(),len=edLoopMs();
+  document.getElementById('edloop').placeholder=`auto ${(edAutoLoop()/1000).toFixed(1)}`;
   let t=`${n} / ${MAXSTEPS} steps · loop ${fmt1(len)} (${(len/1000).toFixed(1)} s)`;
+  if(l&&len<l.t)t+=' — ends before the last step';
   // Beside the loaded audio track, so the two can be made to match exactly.
   if(AU.dur){
     const tr=Math.round(AU.dur*10)*100;
@@ -507,11 +521,11 @@ function edInfo(){
   document.getElementById('edlen').textContent=t;
   document.getElementById('edaddb').disabled=n>=MAXSTEPS;
 }
-function edDraw(){drawMask('edcv',edRampMs(),ed.steps);edInfo()}
+function edDraw(){drawMask('edcv',edLoopMs(),ed.steps);edInfo()}
 function edAdd(){
   const n=ed.steps.length;if(n>=MAXSTEPS)return;
   const last=ed.steps[n-1];
-  ed.steps.push({t:last?last.t+60000:4000,m:last?last.m:1});
+  ed.steps.push({t:last?last.t+60000:4000,m:last?last.m:1,r:edDefRamp()});
   if(edShown===n){document.getElementById('edsteps').append(edRow(n));edShown++;edDraw();}
   else edRender(n+1);
   const w=document.getElementById('edwrap');w.scrollTop=w.scrollHeight;
@@ -522,36 +536,42 @@ async function edLoad(){
     const d=await (await fetchT('/api/seq?i='+i)).json();
     ed={steps:stepsIn(d.steps)};
     document.getElementById('edname').value=d.name;
-    document.getElementById('edramp').value=d.ramp_ms/1000;
+    document.getElementById('edloop').value=d.len/1000;
     document.getElementById('ederr').textContent='';
     edRender();
   }catch(e){}
 }
 async function edSave(){
   const name=document.getElementById('edname').value.trim();
-  const ramp=edRampMs();
+  const loop=edLoopMs(),l=edLast();
   const m=document.getElementById('edmsg');
   if(!name||!ed.steps.length){m.textContent='— need a name and at least one step';return}
   if(ed.steps.length>MAXSTEPS){m.textContent=`— too many steps (max ${MAXSTEPS})`;return}
+  if(!loop||loop<l.t){m.textContent='— the loop must end at or after the last step';return}
   // Stable sort: same-time steps keep their order (the later one wins on playback).
-  const body=[...ed.steps].sort((a,b)=>a.t-b.t).map(s=>`${s.t}:${s.m}`).join(',');
+  const body=[...ed.steps].sort((a,b)=>a.t-b.t).map(s=>`${s.t}:${s.m}:${s.r}`).join(',');
   let r;
   try{
-    r=await fetchT(`/api/seq/save?name=${encodeURIComponent(name)}&ramp_ms=${ramp}`,
+    r=await fetchT(`/api/seq/save?name=${encodeURIComponent(name)}&loop_ms=${loop}`,
                    {method:'POST',body,headers:{'Content-Type':'text/plain'}},10000);
   }catch(e){m.textContent='— save failed: no reply from the box';return}
   m.textContent=r.ok?'— saved (same name overwrites)':'— save failed: '+await r.text();
   if(r.ok){loadSeqList();seq=null;poll();}
 }
 // --- CSV import / export ------------------------------------------------------
-// Columns: time, then six arc columns (1/0, x, on/off; blank = off) or one mask
-// column (0..63). Time is seconds (12.5) or m:ss.s. An optional header row is
-// skipped, and an END row (a time plus the word END) closes the loop: the ramp
-// becomes END - last step. Parsed here in the browser; the box only ever sees
-// the step list on Save.
+// One row per step: time, the six arcs (1/0, x, on/off; blank = off) or a single
+// mask column (0..63), then the ramp into that state in seconds. Times are
+// seconds (12.5, "2,392.0") or m:ss.s. A header row is optional but names the
+// columns (a column headed "ramp" is the ramp). An END row — a time plus the
+// word END — sets the loop length; without one the loop closes at the last
+// step plus its ramp. A blank ramp cell takes the editor's new-step ramp.
+// Older files with no ramp column: every step gets the ramp END - last step.
+// Parsed here in the browser; the box only ever sees the step list on Save.
 const ON=/^(1|x|on|yes|y|true)$/i,OFF=/^(0|off|no|n|false|-|)$/i,ISEND=/^end$/i;
+// "2,392.0" -> "2392.0": spreadsheets add thousands separators to big numbers.
+const unsep=s=>/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(s)?s.replace(/,/g,''):s;
 function parseTime(s){
-  s=(s||'').trim();if(!s)return NaN;
+  s=unsep((s||'').trim());if(!s)return NaN;
   const p=s.split(':');if(p.length>3)return NaN;
   let v=0;
   for(const x of p){if(!/^\d+(\.\d+)?$/.test(x.trim()))return NaN;v=v*60+parseFloat(x)}
@@ -569,23 +589,27 @@ function splitCsv(line,delim){
   out.push(cur);
   return out.map(x=>x.trim());
 }
-function parseCsv(text){
+function parseCsv(text,defRamp){
   const lines=text.replace(/^﻿/,'').split(/\r\n|\n|\r/);
   const first=lines.find(l=>l.trim())||'';
   // Some spreadsheet locales export ; or tab instead of commas.
   const delim=[',',';','\t'].reduce((a,d)=>first.split(d).length>first.split(a).length?d:a,',');
   const rows=[];
   lines.forEach((l,i)=>{if(l.trim()&&!l.trim().startsWith('#'))rows.push({n:i+1,c:splitCsv(l,delim)})});
-  const errs=[],steps=[];let end=null,maskMode=null;
+  const errs=[],steps=[];let end=null,maskMode=null,rampCol=-1;
   if(rows.length&&isNaN(parseTime(rows[0].c[0]))&&!rows[0].c.some(x=>ISEND.test(x))){
     const h=rows.shift();                                        // header row
-    if(h.c.length>=2&&/mask/i.test(h.c[1]))maskMode=true;
-    else if(h.c.length>=7)maskMode=false;
-  }
-  if(maskMode===null){
-    // No header to say: a mask file has nothing past column 2 and numbers in it.
+    rampCol=h.c.findIndex(x=>/ramp/i.test(x));
+    maskMode=h.c.length>=2&&/mask/i.test(h.c[1]);
+  }else{
+    // No header: judge by width. time,mask[,ramp] is at most 3 wide with a
+    // number in column 2; otherwise time + six arcs [+ ramp].
     const data=rows.filter(r=>!r.c.some(x=>ISEND.test(x)));
-    maskMode=data.length>0&&data.every(r=>r.c.slice(2).every(x=>x==='')&&/^\d+$/.test(r.c[1]||''));
+    const width=r=>{let w=r.c.length;while(w&&r.c[w-1]==='')w--;return w};
+    const maxW=Math.max(0,...data.map(width));
+    maskMode=data.length>0&&maxW<=3&&data.every(r=>/^\d+$/.test(r.c[1]||''));
+    if(maskMode&&maxW===3)rampCol=2;
+    if(!maskMode&&maxW>=8)rampCol=7;
   }
   for(const r of rows){
     const c=r.c,ei=c.findIndex(x=>ISEND.test(x));
@@ -611,24 +635,36 @@ function parseCsv(text){
       }
       if(bad)continue;
     }
-    steps.push({t:snap(ts),m});
+    let rp=defRamp;
+    if(rampCol>=0&&(c[rampCol]||'')!==''){
+      const v=parseTime(c[rampCol]);
+      if(isNaN(v)||v>600){errs.push(`line ${r.n}: ramp "${c[rampCol]}" must be 0–600 s`);continue}
+      rp=snap(v);
+    }
+    steps.push({t:snap(ts),m,r:rp});
   }
   if(!steps.length&&!errs.length)errs.push('no steps found');
   if(steps.length>MAXSTEPS)errs.push(`${steps.length} steps — the maximum is ${MAXSTEPS}`);
   steps.sort((a,b)=>a.t-b.t);
-  let ramp=null;
+  let legacyRamp=null;
   if(end!==null&&steps.length){
-    ramp=end-steps[steps.length-1].t;
-    if(ramp<100||ramp>600000)
-      errs.push(`END at ${fmt1(end)} gives a ramp of ${(ramp/1000).toFixed(1)} s — it must be 0.1–600 s after the last step`);
+    const lastT=steps[steps.length-1].t;
+    if(end<lastT)errs.push(`END at ${fmt1(end)} is before the last step (${fmt1(lastT)})`);
+    else if(rampCol<0){
+      // Older layout: END - last step was the one ramp for the whole piece.
+      legacyRamp=end-lastT;
+      if(legacyRamp>600000)
+        errs.push(`END at ${fmt1(end)} gives a ramp of ${(legacyRamp/1000).toFixed(1)} s — add a ramp column, or keep END within 600 s of the last step`);
+      else steps.forEach(s=>s.r=legacyRamp);
+    }
   }
-  return {steps,ramp,errs};
+  return {steps,loop:end,legacyRamp,errs};
 }
 async function edImport(){
   const inp=document.getElementById('edcsv'),f=inp.files[0];inp.value='';
   if(!f)return;
   const er=document.getElementById('ederr'),m=document.getElementById('edmsg');
-  const {steps,ramp,errs}=parseCsv(await f.text());
+  const {steps,loop,legacyRamp,errs}=parseCsv(await f.text(),edDefRamp());
   if(errs.length){
     er.textContent=`Not imported — ${errs.length} problem${errs.length>1?'s':''}:\n`+
       errs.slice(0,12).join('\n')+(errs.length>12?`\n…and ${errs.length-12} more`:'');
@@ -638,20 +674,18 @@ async function edImport(){
   ed={steps};
   const nm=document.getElementById('edname');
   if(!nm.value.trim())nm.value=f.name.replace(/\.[^.]*$/,'').slice(0,23);
+  document.getElementById('edloop').value=loop!==null?loop/1000:'';
   let note=`— imported ${steps.length} steps from ${f.name}`;
-  if(ramp!==null){
-    const was=edRampMs();
-    document.getElementById('edramp').value=ramp/1000;
-    if(was!==ramp)note+=` · ramp set to ${ramp/1000} s from the END row (was ${was/1000} s)`;
-  }
+  if(loop!==null)note+=` · loop ${fmt1(loop)} from the END row`;
+  if(legacyRamp!==null)note+=` · no ramp column, so every step ramps ${legacyRamp/1000} s (END − last step)`;
   m.textContent=note+' · not saved yet';
   edRender();
 }
 function edExport(){
   const st=[...ed.steps].sort((a,b)=>a.t-b.t);if(!st.length)return;
-  const rows=['time,arc1,arc2,arc3,arc4,arc5,arc6'];
-  for(const s of st)rows.push([(s.t/1000).toFixed(1),...[0,1,2,3,4,5].map(ch=>(s.m>>ch)&1)].join(','));
-  rows.push(`${((st[st.length-1].t+edRampMs())/1000).toFixed(1)},END`);
+  const rows=['time,arc1,arc2,arc3,arc4,arc5,arc6,ramp'];
+  for(const s of st)rows.push([(s.t/1000).toFixed(1),...[0,1,2,3,4,5].map(ch=>(s.m>>ch)&1),(s.r/1000).toFixed(1)].join(','));
+  rows.push(`${(edLoopMs()/1000).toFixed(1)},END`);
   const name=(document.getElementById('edname').value.trim()||'sequence').replace(/[^\w\- ]+/g,'_');
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob([rows.join('\n')+'\n'],{type:'text/csv'}));
@@ -944,8 +978,9 @@ String jsonEscape(const String& s) {
   return o;
 }
 
-// Largest /api/seq/save body accepted: 1000 steps of "2400000:63," is ~11 KB.
-constexpr size_t kSeqBodyMax = 16384;
+// Largest /api/seq/save body accepted: 1000 worst-case steps of
+// "2400000:63:600000," are ~18 KB.
+constexpr size_t kSeqBodyMax = 24576;
 
 // Snap a time to the sequence resolution (0.1 s).
 uint32_t snapMs(long ms) {
@@ -954,14 +989,12 @@ uint32_t snapMs(long ms) {
 }
 
 // Parse a save request into d (zeroed by the caller). Returns an error message
-// for the 400 reply, or nullptr on success. Steps are "t_ms:mask" pairs,
-// comma-separated; they are snapped to 0.1 s and sorted by time.
-const char* parseSeqSave(const String& name, long rampMs, const char* body, SeqDef& d) {
+// for the 400 reply, or nullptr on success. Steps are "t_ms:mask:ramp_ms"
+// triples, comma-separated; times and ramps snap to 0.1 s, steps sort by time,
+// and the loop must end at or after the last step.
+const char* parseSeqSave(const String& name, long loopMs, const char* body, SeqDef& d) {
   strlcpy(d.name, name.c_str(), sizeof(d.name));
   if (d.name[0] == '\0') return "missing name";
-  if (rampMs < (long)SEQ_RAMP_MIN_MS) rampMs = SEQ_RAMP_MIN_MS;
-  if (rampMs > (long)SEQ_RAMP_MAX_MS) rampMs = SEQ_RAMP_MAX_MS;
-  d.rampMs = snapMs(rampMs);
 
   const char* c = body;
   uint16_t n = 0;
@@ -971,12 +1004,17 @@ const char* parseSeqSave(const String& name, long rampMs, const char* body, SeqD
     if (n >= SEQ_MAX_STEPS) return "too many steps (max 1000)";
     char* e;
     long t = strtol(c, &e, 10);
-    if (e == c || *e != ':') return "bad step (want t_ms:mask)";
+    if (e == c || *e != ':') return "bad step (want t_ms:mask:ramp_ms)";
     const char* mStart = e + 1;
     long m = strtol(mStart, &e, 10);
     if (e == mStart || m < 0 || m > 63) return "bad step mask (0..63)";
+    if (*e != ':') return "bad step (want t_ms:mask:ramp_ms)";
+    const char* rStart = e + 1;
+    long r = strtol(rStart, &e, 10);
+    if (e == rStart || r < 0 || r > (long)SEQ_RAMP_MAX_MS) return "bad step ramp (0..600000 ms)";
     d.steps[n].timeMs = snapMs(t);
     d.steps[n].mask   = (uint8_t)m;
+    d.steps[n].rampDs = (uint16_t)(snapMs(r) / 100);
     ++n;
     if (*e == ',') { c = e + 1; continue; }
     while (*e == ' ' || *e == '\n' || *e == '\r') ++e;
@@ -985,6 +1023,10 @@ const char* parseSeqSave(const String& name, long rampMs, const char* body, SeqD
   }
   if (n == 0) return "no steps";
   d.stepCount = n;
+  uint32_t lastT = 0;
+  for (uint16_t a = 0; a < n; ++a) if (d.steps[a].timeMs > lastT) lastT = d.steps[a].timeMs;
+  d.loopMs = snapMs(loopMs);
+  if (d.loopMs == 0 || d.loopMs < lastT) return "loop must end at or after the last step";
   // Keep steps sorted by time regardless of entry order (stable, so same-time
   // steps keep their order and the later one still wins on playback). The page
   // sends them sorted, so this is ~linear in practice.
@@ -1051,7 +1093,7 @@ void WebUi::begin(ChannelModel* model, ConfigStore* store, SequenceStore* seqSto
   });
 
   // GET /api/seq?i=N — one stored definition, streamed from its file.
-  // Times/ramp in ms; mask bit i = arc i+1.
+  // Times, ramps and loop in ms; mask bit i = arc i+1.
   server.on("/api/seq", HTTP_GET, [this](AsyncWebServerRequest* req) {
     int i = req->hasParam("i") ? req->getParam("i")->value().toInt() : -1;
     if (i < 0 || i >= SEQ_SLOTS || !seqStore_->exists((uint8_t)i)) {
@@ -1079,25 +1121,25 @@ void WebUi::begin(ChannelModel* model, ConfigStore* store, SequenceStore* seqSto
     req->send(200, "application/json", "{\"ok\":true}");
   });
 
-  // POST /api/seq/save?name=..&ramp_ms=..   body: t_ms:mask,t_ms:mask,...
+  // POST /api/seq/save?name=..&loop_ms=..   body: t_ms:mask:ramp_ms,...
   // The steps ride in the body (text/plain): 1000 of them are ~12 KB, far past
   // what belongs in a URL. The body is gathered into _tempObject (freed by the
   // server with the request) and parsed into a heap SeqDef — never the stack.
   server.on("/api/seq/save", HTTP_POST,
     [this](AsyncWebServerRequest* req) {
-      if (!req->hasParam("name") || !req->hasParam("ramp_ms")) {
-        req->send(400, "text/plain", "missing name/ramp_ms");
+      if (!req->hasParam("name") || !req->hasParam("loop_ms")) {
+        req->send(400, "text/plain", "missing name/loop_ms");
         return;
       }
       const char* body = (const char*)req->_tempObject;
       if (!body) {
-        req->send(400, "text/plain", "missing steps (or body over 16 KB)");
+        req->send(400, "text/plain", "missing steps (or body over 24 KB)");
         return;
       }
       SeqDef* d = (SeqDef*)calloc(1, sizeof(SeqDef));
       if (!d) { req->send(503, "text/plain", "out of memory"); return; }
       const char* err = parseSeqSave(req->getParam("name")->value(),
-                                     req->getParam("ramp_ms")->value().toInt(), body, *d);
+                                     req->getParam("loop_ms")->value().toInt(), body, *d);
       if (err) { free(d); req->send(400, "text/plain", err); return; }
 
       int slot = seqStore_->saveByName(*d);

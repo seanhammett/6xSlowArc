@@ -213,23 +213,26 @@ shape before committing to it. The header gives its ramp and total length.
 
 1. Give it a **name**. Saving with the name of an existing sequence replaces that one, so
    use a new name if you want to keep both.
-2. Set the **ramp** in seconds — how long every fade takes, both up and down. One value
-   for the whole piece. Tenths of a second are allowed (e.g. `2.5`).
-3. Add **steps**. A step is a moment in time and a set of arcs: *"at 4 minutes, arcs 1, 2
-   and 3 are on."* Times are in seconds, to a tenth of a second (`240` or `240.5`); the
-   `m:ss.s` beside each time shows the same moment in minutes. Tick the arcs that should
-   be lit at that moment. The box fades between consecutive steps for you.
-4. **Save**. The drawing at the bottom updates as you work, so you can see the shape
+2. Add **steps**. A step is a moment in time, a set of arcs and a ramp: *"at 4 minutes,
+   arcs 1, 2 and 3 are on, fading in over 2 seconds."* Times are in seconds, to a tenth
+   of a second (`240` or `240.5`); the `m:ss.s` beside each time shows the same moment in
+   minutes. Tick the arcs that should be lit at that moment.
+3. Set each step's **ramp** — how long the fade into that step takes. The fade *finishes*
+   at the step's time, so a step at 240 s with a 2 s ramp starts changing at 238 s. A ramp
+   of `0` switches instantly. New steps take the **new-step ramp** from the box above.
+4. Set the **loop** length — where the piece starts over. Leave it blank and it loops at
+   the last step plus that step's ramp.
+5. **Save**. The drawing at the bottom updates as you work, so you can see the shape
    before saving.
 
-The piece loops. After the last step it fades back to where it began and starts over.
+The piece loops. It starts in the state of its last step, so the join is seamless.
 
 To modify an existing piece rather than start blank, select it above and press **Load
 selected**.
 
-The line beside the Import / Export buttons shows the step count and the **loop length**
-(the last step plus one ramp). When a music track is loaded (§9) it shows the track's
-length too, so you can make the two match exactly.
+The line beside the Import / Export buttons shows the step count and the **loop length**.
+When a music track is loaded (§9) it shows the track's length too, so you can make the two
+match exactly.
 
 The box holds up to **8 sequences**, each up to **1000 steps**. Long lists scroll inside
 the card; more rows appear as you scroll down.
@@ -239,21 +242,25 @@ the card; more rows appear as you scroll down.
 A long piece — one that follows a 40-minute track, say — is far easier to write in a
 spreadsheet than one step at a time. Lay it out like this and save it as CSV:
 
-| time | arc1 | arc2 | arc3 | arc4 | arc5 | arc6 |
-|---|---|---|---|---|---|---|
-| 4 | 1 | 0 | 0 | 0 | 0 | 0 |
-| 64 | 1 | 1 | 0 | 0 | 0 | 0 |
-| 2:04.5 | x | x | x | | | |
-| 2400 | END | | | | | |
+| time | arc1 | arc2 | arc3 | arc4 | arc5 | arc6 | ramp |
+|---|---|---|---|---|---|---|---|
+| 4 | 1 | 0 | 0 | 0 | 0 | 0 | 4 |
+| 64 | 1 | 1 | 0 | 0 | 0 | 0 | 0.5 |
+| 2:04.5 | x | x | x | | | | 2 |
+| 2400 | END | | | | | | |
 
-- **time** is seconds (`64`, `64.5`) or minutes and seconds (`1:04.5`), to a tenth of a
-  second.
+- **time** is seconds (`64`, `64.5`, `2,392.0`) or minutes and seconds (`1:04.5`), to a
+  tenth of a second.
 - For each arc, **1**, **x** or **on** means lit; **0**, **off** or an empty cell means dark.
-- The header row is optional.
-- An optional last row with **END** sets where the loop closes. The ramp becomes the
-  gap between the last step and END, so for a 40-minute track put END at `2400`.
-- Instead of six arc columns you can use a single column of numbers 0–63, where arc 1
-  counts 1, arc 2 counts 2, arc 3 counts 4, and so on.
+- **ramp** is the fade into that row's state, in seconds (0–600). A blank ramp cell takes
+  the editor's new-step ramp.
+- Keep the header row: it's how the importer knows which column is the ramp.
+- An optional last row with **END** sets where the loop closes — for a 40-minute track
+  put END at `2400`. Without it, the loop closes at the last step plus its ramp.
+- Instead of six arc columns you can use a single column of numbers 0–63 (header
+  `time,mask,ramp`), where arc 1 counts 1, arc 2 counts 2, arc 3 counts 4, and so on.
+- A file in the older layout, with no ramp column, still imports: every step then gets
+  the ramp between the last step and END, which is what that layout meant.
 
 Press **Import CSV…** and choose the file. It fills the editor and the drawing, but
 nothing is sent to the box until you press **Save**. If any row has a problem, nothing is

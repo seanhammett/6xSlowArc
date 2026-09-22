@@ -13,10 +13,10 @@
 //   GET  /api/seqs         list stored sequences + the active slot
 //   GET  /api/seq?i=N      one stored sequence definition
 //   POST /api/seq/select   make slot N active (plays on next Play / button push)
-//   POST /api/seq/save     save a sequence (name + ramp in the query, steps in
-//                          the body — up to 1000 steps no longer fit a URL)
-// Sequences travel as {"name","ramp_ms","len","steps":[[t_ms,mask],...]}, streamed
-// rather than built as one String (a 1000-step piece is ~12 KB).
+//   POST /api/seq/save     save a sequence (name + loop length in the query,
+//                          steps in the body — 1000 steps no longer fit a URL)
+// Sequences travel as {"name","len":loop_ms,"steps":[[t_ms,mask,ramp_ms],...]},
+// streamed rather than built as one String (a 1000-step piece is ~16 KB).
 //   GET  /api/scan         async WiFi scan (202 while running, 200 + list done)
 //   POST /api/wifi         store station credentials (forwarded via callback)
 // Unknown paths redirect to / while the SoftAP is up (captive portal).

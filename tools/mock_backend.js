@@ -70,19 +70,20 @@
     null, null, null, null, null,
   ];
 
-  // Literals above are in seconds for readability; the box keeps ms.
-  const toMs = d => d && { name: d.name, rampMs: d.ramp * 1000,
-                           steps: d.steps.map(s => ({ t: s.t * 1000, m: s.m })) };
+  // Literals above are in seconds with one ramp each, for readability; the box
+  // keeps ms, a ramp per step, and the loop length (here last step + ramp).
+  const toMs = d => d && { name: d.name,
+                           loopMs: (d.steps[d.steps.length - 1].t + d.ramp) * 1000,
+                           steps: d.steps.map(s => ({ t: s.t * 1000, m: s.m, r: d.ramp * 1000 })) };
   let seqs = FRESH_SEQS().map(toMs);
   let activeSlot = 0;
 
   // --- SequenceEngine --------------------------------------------------------
   // The box evaluates frames straight from the steps (SeqFrame.h); the page
-  // draws them itself, so all the mock needs is the piece and its loop length
-  // (last step + ramp).
-  const loopLen = d => d && d.steps.length ? d.steps[d.steps.length - 1].t + d.rampMs : 0;
-  const seqJson = d => ({ name: d ? d.name : '', ramp_ms: d ? d.rampMs : 0, len: loopLen(d),
-                          steps: d ? d.steps.map(s => [s.t, s.m]) : [] });
+  // draws them itself, so all the mock needs is the piece and its loop length.
+  const loopLen = d => d && d.steps.length ? d.loopMs : 0;
+  const seqJson = d => ({ name: d ? d.name : '', len: loopLen(d),
+                          steps: d ? d.steps.map(s => [s.t, s.m, s.r]) : [] });
 
   const eng = { def: null, len: 0, queued: null, running: false, startAt: 0, runId: 0 };
 
@@ -173,26 +174,29 @@
       return json({ ok: true });
     },
 
-    // Name + ramp in the query, "t_ms:mask,..." in the body — parsed and
-    // rejected the way WebUi.cpp's parseSeqSave does.
+    // Name + loop length in the query, "t_ms:mask:ramp_ms,..." in the body —
+    // parsed and rejected the way WebUi.cpp's parseSeqSave does.
     'POST /api/seq/save': (q, body) => {
-      if (!q.has('name') || !q.has('ramp_ms')) return text('missing name/ramp_ms', 400);
-      if (typeof body !== 'string' || !body.length) return text('missing steps (or body over 16 KB)', 400);
+      if (!q.has('name') || !q.has('loop_ms')) return text('missing name/loop_ms', 400);
+      if (typeof body !== 'string' || !body.length) return text('missing steps (or body over 24 KB)', 400);
       const name = q.get('name').slice(0, 23);      // SeqDef::name is char[24]
       if (!name) return text('missing name', 400);
       const snap = ms => Math.round(Math.max(0, ms) / 100) * 100;
-      const rampMs = snap(Math.min(600000, Math.max(100, parseInt(q.get('ramp_ms'), 10) || 0)));
       const steps = [];
       for (const part of body.trim().split(',')) {
         if (steps.length >= SEQ_MAX_STEPS) return text('too many steps (max 1000)', 400);
-        const m = /^(-?\d+):(\d+)$/.exec(part.trim());
-        if (!m) return text('bad step (want t_ms:mask)', 400);
+        const m = /^(-?\d+):(\d+):(\d+)$/.exec(part.trim());
+        if (!m) return text('bad step (want t_ms:mask:ramp_ms)', 400);
         if (+m[2] > 63) return text('bad step mask (0..63)', 400);
-        steps.push({ t: snap(parseInt(m[1], 10)), m: +m[2] });
+        if (+m[3] > 600000) return text('bad step ramp (0..600000 ms)', 400);
+        steps.push({ t: snap(parseInt(m[1], 10)), m: +m[2], r: snap(+m[3]) });
       }
       if (!steps.length) return text('no steps', 400);
       steps.sort((a, b) => a.t - b.t);               // stable, like the firmware's
-      const def = { name, rampMs, steps };
+      const loopMs = snap(parseInt(q.get('loop_ms'), 10) || 0);
+      if (!loopMs || loopMs < steps[steps.length - 1].t)
+        return text('loop must end at or after the last step', 400);
+      const def = { name, loopMs, steps };
       // saveByName: same name overwrites, otherwise the first free slot.
       let slot = seqs.findIndex(s => s && s.name === name);
       if (slot < 0) slot = seqs.findIndex(s => !s);

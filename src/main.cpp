@@ -83,6 +83,7 @@ static std::atomic<int8_t> webMode_{-1};    // (int8_t)Mode
 static std::atomic<int8_t> webRun_{-1};     // 0 = stop, 1 = play
 static std::atomic<int8_t> webSeqSlot_{-1}; // stored slot to hand to the engine
 static std::atomic<int32_t> webNudgeMs_{0}; // summed audio-follow nudges, 0 = none
+static std::atomic<int8_t> webLoop_{-1};    // 0 = stop after this pass, 1 = loop
 
 // -------------------------------------------------------------------------
 // Watchdog. A hang resets the chip; the EN pull-ups then hold the motors
@@ -160,6 +161,7 @@ static String buildStateJson() {
   // the box's clock with these (and tells a restart from ordinary progress).
   j += "\"seq_len\":"; j += sequence.loopLengthMs(); j += ',';
   j += "\"run_id\":"; j += sequence.runId(); j += ',';
+  j += "\"seq_loop\":"; j += sequence.loops() ? "true" : "false"; j += ',';
   // Which piece is loaded, and which one is waiting for the next button push.
   // The UI names the timeline from these and refetches the cue table whenever
   // seq_name changes, so a selection made on another phone still shows up.
@@ -271,7 +273,8 @@ void setup() {
               [](bool on) { webRun_ = on ? 1 : 0; },
               [](int32_t ms, uint32_t run) {
                 if (run == sequence.runId()) webNudgeMs_ += ms;
-              });
+              },
+              [](bool on) { webLoop_ = on ? 1 : 0; });
 
   watchdogBegin();
 }
@@ -297,6 +300,9 @@ void loop() {
 
   // Web playback. Play implies Performance, so it works from Gallery in one tap,
   // and is a no-op while already playing so a double tap can't restart the piece.
+  int8_t wl = webLoop_.exchange(-1);
+  if (wl >= 0) sequence.setLoop(wl == 1);
+
   int8_t wr = webRun_.exchange(-1);
   if (wr == 1) {
     setMode(Mode::Performance);

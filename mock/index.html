@@ -96,6 +96,23 @@
   #phys.over #physov{display:flex}
   #physov b{color:#f99;font-size:.95rem;background:rgba(21,23,28,.85);padding:.2rem .6rem;border-radius:6px}
   #physov span{font-size:.72rem;color:#ccc;margin-top:.3rem;background:rgba(21,23,28,.85);padding:.1rem .4rem;border-radius:4px}
+  /* Performance: the sequence and the audio that plays with it, in one lit box. */
+  .perf{border:1px solid #4a6a9a;background:#232a36;box-shadow:0 0 0 3px rgba(74,144,217,.12)}
+  .perf>.phead{font-size:1rem;color:#cfe0ff}
+  .perf .ovbox{margin-top:.6rem}
+  #loopsel{margin-top:.5rem}
+  #loopsel .lbl{font-size:.85rem;color:#bbb}
+  #loopnote{font-size:.8rem;color:#9ad}
+  .lenwarn{background:#fb4;color:#15171c;border-radius:8px;padding:.6rem .8rem;margin:.6rem 0 0;font-size:1rem;font-weight:700;line-height:1.35}
+  .lenwarn small{display:block;font-size:.8rem;font-weight:500;margin-top:.15rem}
+  /* Confirm dialog, drawn as one of the page's own cards. */
+  #cfm{position:fixed;inset:0;z-index:20;background:rgba(10,11,14,.7);display:none;align-items:center;justify-content:center;padding:1rem}
+  #cfm.show{display:flex}
+  #cfm .dlg{background:#1e2128;border:1px solid #3d4453;border-radius:10px;padding:1rem 1.1rem;max-width:22rem;width:100%;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+  #cfm .dlg b{display:block;font-size:1.05rem;margin-bottom:.4rem}
+  #cfm .dlg p{font-size:.9rem;color:#bbb;margin:0 0 1rem}
+  #cfm .btns{display:flex;gap:.5rem;justify-content:flex-end}
+  button.danger{border-color:#e54;color:#fff;background:#6a2a26}
   .wifiask{flex-basis:100%;border-top:1px solid #333a46;padding-top:.45rem;color:#fb4}
   select{background:#15171c;border:1px solid #444;border-radius:6px;color:#e8e8e8;padding:.4rem .6rem}
   input[type=number]{background:#15171c;border:1px solid #444;border-radius:6px;color:#e8e8e8;padding:.25rem .4rem;width:4.5rem}
@@ -172,7 +189,19 @@
   </div>
  </div>
 </div>
-<div class="card" id="audiocard">
+<div class="card perf" id="perfcard">
+ <b class="phead">Performance</b>
+ <div class="lenwarn" id="lenwarn" style="display:none"></div>
+<div class="ovbox" id="seqcard" style="display:none">
+ <b>Sequence</b> <span id="seqinfo"></span> <span id="seqtime"></span>
+ <canvas id="seqcv" height="132"></canvas>
+ <div class="seg" id="loopsel"><span class="lbl">After this run:</span>
+  <button id="lpY" onclick="setLoop(1)">↻ Loop the performance</button>
+  <button id="lpN" onclick="setLoop(0)">■ Stop after this run</button>
+  <span id="loopnote"></span>
+ </div>
+</div>
+<div class="ovbox" id="audiocard">
  <b>Audio</b> — plays a track from this computer in sync with the sequence
  <div class="wrow"><label class="chk"><input type="checkbox" id="auon" onchange="auToggle()"> Play audio on this browser</label></div>
  <div id="aubody" style="display:none">
@@ -182,14 +211,11 @@
    <button onclick="auForget()">Forget track</button>
    <label title="Positive plays the audio earlier, to make up for output latency">offset <input type="number" id="auoff" step="10" value="0" onchange="auOffset()"> ms</label>
   </div>
-  <div class="wrow"><label class="chk" title="Nudges the sequence's clock by a few ms at a time to match the audio. Turn on in one browser only."><input type="checkbox" id="aufollow" onchange="auFollow()"> Keep the lights in step with the audio</label></div>
+  <div class="wrow"><label class="chk" title="Nudges the sequence's clock by a few ms at a time to match the audio. Turn on in one browser only."><input type="checkbox" id="aufollow" onchange="auFollow()"> When necessary, apply time correction to Slow Arcs during playback</label></div>
   <div id="autrack"></div>
   <div id="austat"></div>
  </div>
 </div>
-<div class="card" id="seqcard" style="display:none">
- <b>Sequence</b> <span id="seqinfo"></span> <span id="seqtime"></span>
- <canvas id="seqcv" height="132"></canvas>
 </div>
 <div class="card">
  <b>Set-points</b> — motor speed (M) &amp; bulb brightness (B), 0..100
@@ -235,6 +261,10 @@
  <canvas id="edcv" height="132"></canvas>
 </div>
 </div>
+</div>
+<div id="cfm" role="dialog" aria-modal="true" aria-labelledby="cfmt">
+ <div class="dlg"><b id="cfmt"></b><p id="cfmm"></p>
+  <div class="btns"><button id="cfmno">Cancel</button><button id="cfmok" class="danger"></button></div></div>
 </div>
 <script>
 //
@@ -325,7 +355,16 @@
   const seqJson = d => ({ name: d ? d.name : '', len: loopLen(d),
                           steps: d ? d.steps.map(s => [s.t, s.m, s.r]) : [] });
 
-  const eng = { def: null, len: 0, queued: null, running: false, startAt: 0, runId: 0 };
+  const eng = { def: null, len: 0, queued: null, running: false, startAt: 0, runId: 0,
+                loop: true, pass: 0 };
+  // SequenceEngine::fill(): with looping off, stop at the next wrap.
+  function engTick() {
+    if (!eng.running || !eng.len) return;
+    const pass = Math.floor((Date.now() - eng.startAt) / eng.len);
+    if (pass > eng.pass && !eng.loop) eng.running = false;
+    eng.pass = pass;
+  }
+  setInterval(engTick, 50);
 
   function engApply(def) {
     if (eng.running) { eng.queued = def; return; }  // takes effect on next start
@@ -334,6 +373,7 @@
   function engStart() {
     if (eng.queued) { eng.def = eng.queued; eng.len = loopLen(eng.queued); eng.queued = null; }
     eng.runId++;
+    eng.pass = 0;
     eng.running = true;
     eng.startAt = Date.now();
   }
@@ -366,6 +406,7 @@
       seq_t: engPosMs(),
       seq_len: eng.len,
       run_id: eng.runId,
+      seq_loop: eng.loop,
       seq_name: eng.def ? eng.def.name : '',
       seq_queued: eng.queued ? eng.queued.name : '',
       wifi: dev.wifi,
@@ -482,6 +523,11 @@
       return json({ ok: true });
     },
 
+    'POST /api/seq/loop': q => {
+      if (!q.has('on')) return text('missing on', 400);
+      eng.loop = q.get('on') !== '0';
+      return json({ ok: true });
+    },
     'POST /api/run': q => {
       if (!q.has('on')) return text('missing on', 400);
       if (parseInt(q.get('on'), 10) !== 0) {
@@ -691,6 +737,7 @@
       if (!eng.len) return;
       if (!eng.running) engStart();
       eng.startAt = Date.now() - Math.round(+e.target.value / 1000 * eng.len);
+      eng.pass = 0;                   // a scrub is not a wrap
       syncPanel();
     });
 
@@ -807,15 +854,41 @@ function paintPlay(mode,running,ovr,sw,btnAgo){
     ?`The box is in ${mode} until the switch is next flipped`:'';
 }
 function ago(s){return s<60?s+' s':s<3600?Math.floor(s/60)+' min':Math.floor(s/3600)+' h'}
-async function setMode(m){await post(`/api/mode?m=${m}`);poll();}
+// "Are you sure?" in the page's own style. Resolves true on the red button;
+// Cancel, Escape or a click outside the box resolve false.
+function ask(title,msg,ok){
+  const box=document.getElementById('cfm'),y=document.getElementById('cfmok'),n=document.getElementById('cfmno');
+  document.getElementById('cfmt').textContent=title;
+  document.getElementById('cfmm').textContent=msg;
+  y.textContent=ok;box.classList.add('show');n.focus();
+  return new Promise(res=>{
+    const done=v=>{box.classList.remove('show');y.onclick=n.onclick=box.onclick=null;
+                   document.removeEventListener('keydown',key,true);res(v)};
+    const key=e=>{if(e.key==='Escape'){e.preventDefault();done(false)}};
+    y.onclick=()=>done(true);n.onclick=()=>done(false);
+    box.onclick=e=>{if(e.target===box)done(false)};
+    document.addEventListener('keydown',key,true);
+  });
+}
+const askStop=msg=>ask('Stop the performance?',msg,'Stop performance');
+async function setMode(m){
+  // Leaving Performance stops a running piece, so it gets the same warning as Stop.
+  if(m==='Gallery'&&curRun&&curMode==='Performance'&&!await askStop(
+    'The sequence is running. Switching to Gallery stops it and returns the arcs to their set-points.'))return;
+  await post(`/api/mode?m=${m}`);poll();
+}
 async function playStop(){
+  if(curRun){
+    if(!await askStop('The sequence is running. Stopping it leaves the arcs holding wherever they are.'))return;
+    await post('/api/run?on=0');poll();return;
+  }
   // Starting from this page: start the audio inside the click (a user gesture,
   // so the browser allows it) instead of waiting for the next poll to see it.
   // (Play implies Performance on the box, so no mode check here.)
   if(!curRun&&AU.on&&AU.dur&&AU.primed){
     auStartAt(Math.max(0,AU.offset)/1000);AU.adoptUntil=performance.now()+2500;
   }
-  await post(`/api/run?on=${curRun?0:1}`);poll();
+  await post('/api/run?on=1');poll();
 }
 async function scan(){
   const nets=document.getElementById('nets');nets.textContent='scanning…';
@@ -852,7 +925,13 @@ function wsave(){
 // a piece was playing, which by design only takes over at the next press.
 const MAXSTEPS=1000;              // mirror SEQ_MAX_STEPS in config.h
 let seq=null,seqKey=0,tlCache=null,seqT=0,seqAt=0,seqRun=false,seqLive=false,seqName='',seqQueued='';
-let seqLen=0,seqRunId=0,curMode='';
+let seqLen=0,seqRunId=0,curMode='',seqLoop=true;
+// Loop, or stop at the end of the pass in progress. Optimistic; the poll confirms.
+function paintLoop(){
+  document.getElementById('lpY').classList.toggle('on',seqLoop);
+  document.getElementById('lpN').classList.toggle('on',!seqLoop);
+}
+async function setLoop(on){seqLoop=!!on;paintLoop();await post('/api/seq/loop?on='+on);poll();}
 const stepsIn=a=>a.map(([t,m,r])=>({t,m,r}));   // API [[t_ms,mask,ramp_ms],...] -> [{t,m,r}]
 async function loadSeq(){
   try{
@@ -940,12 +1019,16 @@ function drawSeq(){
     document.getElementById('seqinfo').textContent=`— ${nm} · device offline`;
     document.getElementById('seqtime').textContent='';
   }else if(seqRun){
-    const t=(seqT+(performance.now()-seqAt))%seq.len;
+    // Playing once, the playhead parks at the end rather than wrapping while the
+    // box's stop is still on its way to the next poll.
+    const e=seqT+(performance.now()-seqAt),t=seqLoop?e%seq.len:Math.min(e,seq.len);
     ctx.strokeStyle='#e54';ctx.lineWidth=1.5;
     ctx.beginPath();ctx.moveTo(x(t),0);ctx.lineTo(x(t),H);ctx.stroke();
     document.getElementById('seqinfo').textContent=`— ${nm} · running${q}`;
     document.getElementById('seqtime').textContent=`${fmt(t)} / ${fmt(seq.len)}`;
+    document.getElementById('loopnote').textContent=seqLoop?'':`— stops in ${fmt(Math.max(0,seq.len-t))}`;
   }else{
+    document.getElementById('loopnote').textContent='';
     document.getElementById('seqinfo').textContent=
       `— ${nm} · stopped (press the sequence button)${q}`;
     document.getElementById('seqtime').textContent=`loop ${fmt(seq.len)}`;
@@ -1333,7 +1416,7 @@ function auFollow(){
 const auLoops=()=>!!seqLen&&Math.abs(AU.dur*1000-seqLen)<=1000;
 function auStartAt(s){
   const el=auEl();AU.stopTok++;clearInterval(AU.fadeT);el.volume=1;
-  el.loop=auLoops();
+  el.loop=auLoops()&&seqLoop;
   try{el.currentTime=s}catch(e){}
   AU.settle=performance.now()+1500;AU.err=null;AU.samples=[];AU.lastLoop=-1;AU.playing=true;
   const p=el.play();
@@ -1377,9 +1460,18 @@ function auSync(){
   if(auLocked()){auRender();return}
   let restarted=seqRunId!==AU.lastRun;
   if(restarted&&pageStart&&AU.playing){restarted=false;AU.adoptUntil=0}   // already started it
+  // A gapless self-looping track must stop looping once the box is set to stop
+  // after this run (changing .loop doesn't touch what is playing).
+  if(AU.playing)AU.el.loop=auLoops()&&seqLoop;
   const loopN=Math.floor((boxPos()+AU.offset)/seqLen);
-  const wrapped=AU.lastLoop>=0&&loopN!==AU.lastLoop&&!AU.el.loop;
+  const crossed=AU.lastLoop>=0&&loopN!==AU.lastLoop;
+  const wrapped=crossed&&!AU.el.loop;
   AU.lastRun=seqRunId;AU.lastLoop=loopN;
+  // Playing once: the box stops at this wrap, so let the music end with it
+  // instead of starting it over for the moment until the next poll says so.
+  if(!seqLoop&&((crossed&&!restarted)||AU.doneRun===seqRunId)){
+    AU.doneRun=seqRunId;if(AU.playing)auFadeStop();auRender();return;
+  }
   const tgt=auTarget();
   if(tgt===null){if(AU.playing)auFadeStop();auRender();return}
   if(!AU.playing||restarted||wrapped){auStartAt(tgt);AU.lastLoop=loopN;auRender();return}
@@ -1404,6 +1496,15 @@ function auMeasure(){
 }
 function auRender(){
   document.getElementById('aubanner').style.display=auLocked()?'':'none';
+  // Lengths differ: loud, across the top of the Performance box. Only the
+  // earlier of the two plays through; the audio restarts at each loop.
+  const lw=document.getElementById('lenwarn'),
+        diff=AU.on&&AU.dur&&seqLen&&Math.abs(AU.dur*1000-seqLen)>1000;
+  lw.style.display=diff?'':'none';
+  if(diff)lw.innerHTML=`⚠ Track and sequence lengths differ`+
+    `<small>track ${fmt1(AU.dur*1000)} · sequence loop ${fmt1(seqLen)} — `+
+    (AU.dur*1000<seqLen?'the audio stops early and is silent until the sequence loops':'the audio is cut off each time the sequence loops')+
+    `. Match them on the Sequences tab.</small>`;
   if(!AU.on)return;
   document.getElementById('autrack').textContent=AU.url
     ?`${AU.name} · ${(AU.size/1048576).toFixed(1)} MB · ${AU.dur?fmt1(AU.dur*1000):'reading…'}${AU.saved?' · saved in this browser':''}`
@@ -1412,10 +1513,8 @@ function auRender(){
   if(!AU.url)s='choose the track file on this computer';
   else if(auLocked())s='locked — click anywhere on the page to enable audio';
   else if(AU.playing)s='playing'+(AU.err!==null?` (${AU.err>=0?'+':'−'}${Math.round(Math.abs(AU.err)*1000)} ms)`:'')
-    +(AU.follow?' · lights follow the audio':' · free-running');
+    +(AU.follow?' · time correction on':' · free-running');
   else s='armed — plays when the sequence runs';
-  if(AU.dur&&seqLen&&Math.abs(AU.dur*1000-seqLen)>1000)
-    s+=` · track ${fmt1(AU.dur*1000)} vs loop ${fmt1(seqLen)} — lengths differ`;
   if(document.hidden&&AU.url&&!AU.playing)s+=' · tab in the background: keep it in front so a start is caught promptly';
   if(AU.note)s+=' · '+AU.note;
   document.getElementById('austat').textContent=s;
@@ -1490,6 +1589,7 @@ async function poll(){
     // seq_t was sampled mid-request: credit half the round trip.
     seqRun=d.running;seqT=d.seq_t+(d.running?(t1-t0)/2:0);seqAt=t1;seqRtt=t1-t0;
     seqLen=d.seq_len||0;seqRunId=d.run_id||0;curMode=d.mode;
+    seqLoop=d.seq_loop!==false;paintLoop();
     // Refetch the timeline whenever the loaded piece changes — including when
     // another phone changed it, which no local seq=null would have caught.
     const changed=seqName!==d.seq_name;

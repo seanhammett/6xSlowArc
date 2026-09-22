@@ -54,6 +54,7 @@ void SequenceEngine::start() {
     hasQueued_ = false;
   }
   ++runId_;
+  pass_    = 0;
   running_ = true;
   startMs_ = millis();
 }
@@ -84,13 +85,24 @@ bool SequenceEngine::fill(const uint8_t  setBrightness[NUM_CHANNELS],
                           uint16_t outSpeedHz[NUM_CHANNELS]) {
   if (!running_) return false;
 
+  // Play once: at the first wrap after looping was turned off, write the pass's
+  // closing frame and stop. The main loop then holds it (SEQUENCE_STOP_HOLD).
+  uint32_t pos = positionMs();
+  bool ending = false;
+  if (loopLen_) {
+    uint32_t pass = (millis() - startMs_) / loopLen_;
+    if (pass > pass_ && !loop_) { ending = true; pos = loopLen_ - 1; }
+    pass_ = pass;
+  }
+
   uint8_t scale[NUM_CHANNELS];
-  if (!seqFrameAt(def_, positionMs(), scale)) return false;
+  if (!seqFrameAt(def_, pos, scale)) return false;
 
   for (uint8_t ch = 0; ch < NUM_CHANNELS; ++ch) {
     // Bulb and motor share one scale: an arc's bulb + motor move together.
     outBrightness[ch] = scale8(setBrightness[ch], scale[ch]);
     outSpeedHz[ch]    = scaleHz(setSpeedHz[ch],   scale[ch]);
   }
+  if (ending) running_ = false;
   return true;
 }

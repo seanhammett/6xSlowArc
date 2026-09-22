@@ -6,8 +6,8 @@
 // list of steps ("at time T these arcs are on", bulb + motor together) with one
 // shared ramp — created on the web UI's Sequences tab and persisted by
 // SequenceStore. The engine eases between states rather than snapping, and the
-// timeline loops. The step semantics live in SeqFrame.h, which evaluates the
-// frame straight from the steps (no expanded cue table: at 1000 steps that
+// timeline loops (or plays once, per setLoop). The step semantics live in
+// SeqFrame.h, which evaluates the frame straight from the steps (no expanded cue table: at 1000 steps that
 // table would cost ~32 KB of RAM).
 //
 // Frame values are SCALES OF THE STORED SET-POINTS, not absolute levels:
@@ -48,6 +48,12 @@ class SequenceEngine {
 
   bool running() const { return running_; }
 
+  // Loop (default) or play once: with looping off the engine stops itself at the
+  // end of the current pass, holding the closing frame. Turning it off mid-run
+  // lets the pass in progress finish. Runtime only — boots looping.
+  void setLoop(bool on) { loop_ = on; }
+  bool loops() const { return loop_; }
+
   // While running, overwrite outBrightness/outSpeed with the current frame:
   // the given set-points scaled by the frame's per-channel scale. No-op when
   // stopped. Returns true if it wrote a frame.
@@ -86,6 +92,8 @@ class SequenceEngine {
   SeqDef   queued_    = {};            // applied at next start() when running
   bool     hasQueued_ = false;
   bool     running_   = false;
+  bool     loop_      = true;
+  uint32_t pass_      = 0;             // loops completed this run, as fill() last saw
   uint32_t startMs_   = 0;
   uint32_t loopLen_   = 0;             // cached: read from the web task
   uint32_t runId_     = 0;

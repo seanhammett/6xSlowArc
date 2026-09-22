@@ -86,7 +86,16 @@
   const seqJson = d => ({ name: d ? d.name : '', len: loopLen(d),
                           steps: d ? d.steps.map(s => [s.t, s.m, s.r]) : [] });
 
-  const eng = { def: null, len: 0, queued: null, running: false, startAt: 0, runId: 0 };
+  const eng = { def: null, len: 0, queued: null, running: false, startAt: 0, runId: 0,
+                loop: true, pass: 0 };
+  // SequenceEngine::fill(): with looping off, stop at the next wrap.
+  function engTick() {
+    if (!eng.running || !eng.len) return;
+    const pass = Math.floor((Date.now() - eng.startAt) / eng.len);
+    if (pass > eng.pass && !eng.loop) eng.running = false;
+    eng.pass = pass;
+  }
+  setInterval(engTick, 50);
 
   function engApply(def) {
     if (eng.running) { eng.queued = def; return; }  // takes effect on next start
@@ -95,6 +104,7 @@
   function engStart() {
     if (eng.queued) { eng.def = eng.queued; eng.len = loopLen(eng.queued); eng.queued = null; }
     eng.runId++;
+    eng.pass = 0;
     eng.running = true;
     eng.startAt = Date.now();
   }
@@ -127,6 +137,7 @@
       seq_t: engPosMs(),
       seq_len: eng.len,
       run_id: eng.runId,
+      seq_loop: eng.loop,
       seq_name: eng.def ? eng.def.name : '',
       seq_queued: eng.queued ? eng.queued.name : '',
       wifi: dev.wifi,
@@ -243,6 +254,11 @@
       return json({ ok: true });
     },
 
+    'POST /api/seq/loop': q => {
+      if (!q.has('on')) return text('missing on', 400);
+      eng.loop = q.get('on') !== '0';
+      return json({ ok: true });
+    },
     'POST /api/run': q => {
       if (!q.has('on')) return text('missing on', 400);
       if (parseInt(q.get('on'), 10) !== 0) {
@@ -452,6 +468,7 @@
       if (!eng.len) return;
       if (!eng.running) engStart();
       eng.startAt = Date.now() - Math.round(+e.target.value / 1000 * eng.len);
+      eng.pass = 0;                   // a scrub is not a wrap
       syncPanel();
     });
 

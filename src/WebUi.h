@@ -47,7 +47,8 @@ class WebUi {
   // onSequenceActivated fires when the active sequence changes (selection, or
   // a save that touches the active slot) so main can hand it to the engine.
   // onMode / onRun receive mode and play/stop commands; onNudge receives
-  // (ms, run id) sequence-clock nudges from a browser's audio follow. All run on
+  // (ms, run id) sequence-clock nudges from a browser's audio follow; onLoop
+  // receives the loop / play-once choice. All run on
   // the web task, so main queues them for its loop rather than acting on them here.
   void begin(ChannelModel* model, ConfigStore* store, SequenceStore* seqStore,
              bool* arcEnabled,
@@ -57,7 +58,8 @@ class WebUi {
              std::function<void(uint8_t)> onSequenceActivated,
              std::function<void(Mode)> onMode,
              std::function<void(bool)> onRun,
-             std::function<void(int32_t, uint32_t)> onNudge);
+             std::function<void(int32_t, uint32_t)> onNudge,
+             std::function<void(bool)> onLoop);
 
  private:
   ChannelModel*           model_ = nullptr;
@@ -71,4 +73,5 @@ class WebUi {
   std::function<void(Mode)>    onMode_;
   std::function<void(bool)>    onRun_;
   std::function<void(int32_t, uint32_t)> onNudge_;
+  std::function<void(bool)>    onLoop_;
 };

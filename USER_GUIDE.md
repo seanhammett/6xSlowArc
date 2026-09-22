@@ -144,7 +144,9 @@ line asks you to connect it to a local WiFi network, with a link to **WiFi setup
 
 Under the tabs, the **Override physical controls** card has two halves. On the left,
 **This page** does the job of the front panel: **Gallery** and **Performance** choose the
-mode, and **▶ Play / ■ Stop** starts and stops the selected sequence. The highlighted
+mode, and **▶ Play / ■ Stop** starts and stops the selected sequence. Stopping a running
+sequence — with **Stop**, or by choosing **Gallery** — asks **Stop the performance?**
+first, so a stray tap can't end a show. The highlighted
 button is the box's current mode. On the right, **Front panel** shows the controls on the
 box itself: which way the mode switch is set, and when the sequence button was last
 pushed. If the page has overridden the switch, that half is outlined in red and marked
@@ -182,13 +184,20 @@ there is no crawling-but-not-quite-stopped state.
 
 ## 7. Watching a sequence play
 
-In Performance mode a timeline appears above the sliders.
+In Performance mode a timeline appears in the **Performance** box, above the sliders.
 
 ![Performance mode with a sequence running](docs/img/ui-performance.png)
 
 Each of the six rows is one arc. The yellow shape shows when that arc is lit; the red
 line is the current position, sweeping left to right and looping. The header names the
 piece being drawn and shows how far through you are — `5:32 / 11:08` above.
+
+Under the timeline, **After this run** chooses what happens at the end of the piece:
+**↻ Loop the performance** (the default) starts it again straight away; **■ Stop after
+this run** lets the current pass finish and then stops, with the arcs holding their final
+state and the music fading out. You can change it while the piece plays — choosing Stop
+part-way through still lets that pass finish, and the header counts down to the end. The
+choice lasts until you change it or the box restarts, which puts it back to Loop.
 
 If you pick a different sequence while one is playing, the header says so —
 *"FAST" starts on the next press* (of Play or the sequence button). The drawing keeps showing the piece that is
@@ -283,7 +292,7 @@ minute loop.
 
 ## 9. Playing the music with the lights
 
-The Control tab's **Audio** card plays a music track from the laptop in step with the
+The **Audio** section of the Control tab's **Performance** box plays a music track from the laptop in step with the
 sequence, through the laptop's own sound output (and on to the speakers). The track stays
 on the laptop; it is never sent to the box.
 
@@ -301,16 +310,16 @@ button on this page, the front-panel button, or another phone. It starts at the 
 point in the piece as the arcs and fades out when the sequence stops or the box goes to
 Gallery. Once playing, the music is never adjusted — any jump in it would be heard.
 
-With **Keep the lights in step with the audio** ticked (the default), the page instead
+With **When necessary, apply time correction to Slow Arcs during playback** ticked (the default), the page instead
 nudges the *sequence* a few milliseconds at a time to stay with the music; nobody can see
 the arcs move 20 ms early or late. Unticked, music and lights simply run side by side from
 a common start. The status line shows how closely they agree, e.g.
-`playing (+8 ms) · lights follow the audio`. Tick it on one browser only: two laptops
+`playing (+8 ms) · time correction on`. Tick it on one browser only: two laptops
 following two copies of the track would pull the sequence between them.
 
 - **Match the lengths.** The sequence's loop length should equal the track's length — a
-  40:00 track needs a sequence that closes at 2400 s (see the END row in §8). The card
-  warns when they differ.
+  40:00 track needs a sequence that closes at 2400 s (see the END row in §8). When they
+  differ, a large amber banner across the top of the Performance box says so.
 - **If the sound is early or late** compared with the arcs, adjust **offset**: a positive
   number plays the sound earlier. Bluetooth speakers need several hundred ms; a cable or
   USB sound interface needs little or none.

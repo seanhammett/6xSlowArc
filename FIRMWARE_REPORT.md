@@ -225,7 +225,9 @@ Single PROGMEM page, two tabs:
 - **Control** — an Override physical controls card (Gallery / Performance, Play / Stop beside the front-panel switch position and last button push, outlined red when overridden),
   per‑arc brightness/speed sliders, a typed Hz box per arc, per‑arc on/off
   buttons, live status (mode, active sequence, running, WiFi, IP, fault, uptime), a
-  timeline view of the running sequence, and the WiFi provisioning card.
+  Performance box grouping the running sequence's timeline with the audio player (and a
+  banner when track and loop lengths differ), and the WiFi provisioning card. Stopping a
+  running sequence from the page asks for confirmation first.
 - **Sequences** — list/select stored sequences, preview, and create/save a new one.
 
 **Layout** — the six arcs are sized to fit the viewport, not to be scrolled: the full rack
@@ -257,6 +259,7 @@ as queued rather than silently leaving the timeline apparently unchanged.
 | `GET /api/seqs` | list stored sequences + the active slot |
 | `GET /api/seq?i=N` | one stored sequence definition |
 | `POST /api/seq/select` | make slot N active |
+| `POST /api/seq/loop` | `?on=0\|1`: loop the piece (1, boot default) or stop at the end of the pass in progress (0); runtime only, reported as `seq_loop` |
 | `POST /api/seq/nudge` | `?ms=N&run=R`: shift the running sequence's clock by N ms (±5000), ignored unless R is the current run — the audio card's lights‑follow |
 | `POST /api/seq/save` | save a sequence: `name`, `loop_ms` in the query; `t_ms:mask:ramp_ms,…` in a text/plain body (≤ 24 KB) |
 

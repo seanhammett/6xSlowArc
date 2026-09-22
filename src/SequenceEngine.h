@@ -56,6 +56,11 @@ class SequenceEngine {
             uint8_t  outBrightness[NUM_CHANNELS],
             uint16_t outSpeedHz[NUM_CHANNELS]);
 
+  // Shift the running piece's clock by ms (+ = forward, - = back, never before
+  // this run's start). How a browser playing the audio keeps the lights in step
+  // with its track without ever touching the audio. No-op when stopped.
+  void nudge(int32_t ms);
+
   uint32_t loopLengthMs() const { return loopLen_; }
   uint32_t positionMs() const;          // ms into the loop; 0 when stopped
 

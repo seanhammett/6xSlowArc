@@ -132,11 +132,12 @@
  <div class="wrow"><label class="chk"><input type="checkbox" id="auon" onchange="auToggle()"> Play audio on this browser</label></div>
  <div id="aubody" style="display:none">
   <div class="wrow">
-   <input type="file" id="aufile" accept="audio/*,.m4a,.wav,.aif,.aiff,.mp3" onchange="auPick()" hidden>
+   <input type="file" id="aufile" accept="audio/*,.m4a,.flac,.wav,.aif,.aiff,.mp3" onchange="auPick()" hidden>
    <button onclick="document.getElementById('aufile').click()">Choose track…</button>
    <button onclick="auForget()">Forget track</button>
    <label title="Positive plays the audio earlier, to make up for output latency">offset <input type="number" id="auoff" step="10" value="0" onchange="auOffset()"> ms</label>
   </div>
+  <div class="wrow"><label class="chk" title="Nudges the sequence's clock by a few ms at a time to match the audio. Turn on in one browser only."><input type="checkbox" id="aufollow" onchange="auFollow()"> Keep the lights in step with the audio</label></div>
   <div id="autrack"></div>
   <div id="austat"></div>
  </div>
@@ -363,6 +364,16 @@
       if (!(i >= 0 && i < SEQ_SLOTS) || !seqs[i]) return text('no such sequence', 404);
       activeSlot = i;
       engApply(seqs[i]);
+      return json({ ok: true });
+    },
+
+    // SequenceEngine::nudge(): shift the clock, never back past this run's start.
+    'POST /api/seq/nudge': q => {
+      if (!q.has('ms') || !q.has('run')) return text('missing ms/run', 400);
+      const ms = parseInt(q.get('ms'), 10);
+      if (!(ms >= -5000 && ms <= 5000)) return text('bad ms', 400);
+      if (eng.running && parseInt(q.get('run'), 10) === eng.runId)
+        eng.startAt -= Math.max(ms, -(Date.now() - eng.startAt));
       return json({ ok: true });
     },
 
@@ -1152,14 +1163,22 @@ function edExport(){
   setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);
 }
 // --- Audio -------------------------------------------------------------------
-// The track is a file on THIS computer, never sent to the box. The page follows
-// the box's clock: whenever the sequence runs, the audio plays at the box's
-// position (seq_t, corrected by half the poll round trip), nudged by up to
-// ±0.5 % playback rate to stay in step and re-seeked if it is ever >250 ms out.
+// The track is a file on THIS computer, never sent to the box. The audio is the
+// master and is never touched while it plays — no seeks, no rate changes, both of
+// which are audible. It is only started (when the sequence starts, or at a wrap
+// when the track's length differs from the loop's) and stopped. Instead, with
+// "keep the lights in step" on, the page measures the box against the audio each
+// poll and nudges the box's sequence clock (POST /api/seq/nudge): the lights
+// shifting a few ms is invisible. Off, the two free-run from a common start.
 // Opt-in per browser, so phones used as remotes stay silent. The chosen file is
 // kept in IndexedDB so a reload doesn't need it picked again.
-const AU={on:false,el:null,ctx:null,gain:null,url:'',name:'',size:0,dur:0,saved:false,note:'',
-  primed:false,playing:false,lastRun:-1,adoptUntil:0,settle:0,err:null,stopTok:0,offset:0};
+const AU={on:false,follow:true,el:null,url:'',name:'',size:0,dur:0,saved:false,note:'',
+  primed:false,playing:false,lastRun:-1,lastLoop:-1,adoptUntil:0,settle:0,err:null,
+  samples:[],stopTok:0,fadeT:0,offset:0};
+// Nudge only past AU_DEADBAND ms of error, by at most AU_MAXNUDGE ms, judged on
+// the best of the last AU_WINDOW polls.
+const AU_DEADBAND=20,AU_MAXNUDGE=250,AU_WINDOW=4;
+let seqRtt=0;                       // the last poll's round trip, ms
 function lsGet(k,d){try{const v=localStorage.getItem(k);return v===null?d:v}catch(e){return d}}
 function lsSet(k,v){try{localStorage.setItem(k,v)}catch(e){}}
 function idb(){
@@ -1181,35 +1200,21 @@ async function idbDo(mode,fn){
 function auEl(){
   if(AU.el)return AU.el;
   const el=AU.el=new Audio();el.preload='auto';
-  el.preservesPitch=el.mozPreservesPitch=el.webkitPreservesPitch=true;   // rate nudges keep pitch
   el.addEventListener('loadedmetadata',()=>{AU.dur=isFinite(el.duration)?el.duration:0;auRender();edInfo();});
   el.addEventListener('ended',()=>{AU.playing=false});
   return el;
 }
-// element -> gain (for fades) -> speakers. Created on a user gesture: browsers
-// start an AudioContext suspended otherwise.
-function auGraph(){
-  if(AU.ctx)return AU.ctx;
-  const C=window.AudioContext||window.webkitAudioContext;if(!C)return null;
-  const ctx=AU.ctx=new C(),src=ctx.createMediaElementSource(auEl());
-  AU.gain=ctx.createGain();src.connect(AU.gain);AU.gain.connect(ctx.destination);
-  return ctx;
-}
-function auLocked(){return AU.on&&!!AU.url&&(!AU.primed||(AU.ctx&&AU.ctx.state!=='running'))}
+function auLocked(){return AU.on&&!!AU.url&&!AU.primed}
 // Browsers only allow sound after a user gesture. Called from any click/key while
-// locked: resume the context and play+pause the element (silently) inside the
-// gesture, after which the page may start it on its own.
+// locked: play+pause the element (muted) inside the gesture, after which the page
+// may start it on its own.
 async function auUnlock(){
   if(!AU.on)return;
-  const ctx=auGraph(),el=auEl();
-  try{if(ctx&&ctx.state!=='running')await ctx.resume()}catch(e){}
+  const el=auEl();
   if(!AU.primed&&el.src&&!AU.playing){
-    try{
-      if(AU.gain)AU.gain.gain.value=0;
-      await el.play();
-      if(!AU.playing)el.pause();
-      AU.primed=true;
-    }catch(e){}
+    el.muted=true;
+    try{await el.play();if(!AU.playing)el.pause();AU.primed=true}catch(e){}
+    el.muted=false;
   }
   auRender();auSync();
 }
@@ -1259,26 +1264,40 @@ function auToggle(){
 function auOffset(){
   const i=document.getElementById('auoff');
   AU.offset=Math.max(-2000,Math.min(2000,Math.round(+i.value||0)));
-  i.value=AU.offset;lsSet('au_off',AU.offset);AU.settle=0;
+  i.value=AU.offset;lsSet('au_off',AU.offset);AU.settle=0;AU.samples=[];
 }
+function auFollow(){
+  AU.follow=document.getElementById('aufollow').checked;lsSet('au_follow',AU.follow?'1':'0');
+  AU.samples=[];auRender();
+}
+// A track the same length as the loop (within 1 s) loops itself, gaplessly;
+// any other is restarted by auSync at each wrap.
+const auLoops=()=>!!seqLen&&Math.abs(AU.dur*1000-seqLen)<=1000;
 function auStartAt(s){
-  const el=auEl();AU.stopTok++;
-  if(AU.gain&&AU.ctx){const g=AU.gain.gain,now=AU.ctx.currentTime;g.cancelScheduledValues(now);g.setValueAtTime(1,now)}
+  const el=auEl();AU.stopTok++;clearInterval(AU.fadeT);el.volume=1;
+  el.loop=auLoops();
   try{el.currentTime=s}catch(e){}
-  el.playbackRate=1;AU.settle=performance.now()+1000;AU.err=null;AU.playing=true;
+  AU.settle=performance.now()+1500;AU.err=null;AU.samples=[];AU.lastLoop=-1;AU.playing=true;
   const p=el.play();
   if(p&&p.catch)p.catch(()=>{AU.playing=false;AU.primed=false;auRender()});
 }
+// Fade out over 1.5 s on the element's own volume, then pause.
 function auFadeStop(){
   AU.playing=false;
   const el=AU.el,tok=++AU.stopTok;if(!el)return;
-  if(AU.gain&&AU.ctx){
-    const g=AU.gain.gain,now=AU.ctx.currentTime;
-    g.cancelScheduledValues(now);g.setValueAtTime(g.value,now);g.linearRampToValueAtTime(0,now+1.5);
-    setTimeout(()=>{if(tok===AU.stopTok)el.pause()},1600);
-  }else el.pause();
+  const t0=performance.now(),v0=el.volume;
+  clearInterval(AU.fadeT);
+  AU.fadeT=setInterval(()=>{
+    if(tok!==AU.stopTok){clearInterval(AU.fadeT);return}
+    const k=(performance.now()-t0)/1500;
+    if(k>=1){clearInterval(AU.fadeT);el.pause();el.volume=1}
+    else el.volume=v0*(1-k)*(1-k);
+  },30);
 }
-function auStopNow(){AU.playing=false;AU.stopTok++;if(AU.el)AU.el.pause()}
+function auStopNow(){
+  AU.playing=false;AU.stopTok++;clearInterval(AU.fadeT);
+  if(AU.el){AU.el.pause();AU.el.volume=1}
+}
 // Box position in ms, extrapolated since the last poll (not wrapped).
 const boxPos=()=>seqRun?seqT+(performance.now()-seqAt):0;
 // Seconds into the track for this moment of the loop, or null when there is no
@@ -1288,7 +1307,8 @@ function auTarget(){
   let p=(boxPos()+AU.offset)%seqLen;if(p<0)p+=seqLen;
   return p/1000<AU.dur?p/1000:null;
 }
-// Called after every successful poll: start, correct or stop the audio.
+// Called after every successful poll: start or stop the audio, then measure the
+// box against it.
 function auSync(){
   if(!AU.on||!AU.url||!AU.dur){auRender();return}
   const pageStart=performance.now()<AU.adoptUntil;   // our own Play, not yet seen by a poll
@@ -1297,17 +1317,32 @@ function auSync(){
     auRender();return;
   }
   if(auLocked()){auRender();return}
-  const tgt=auTarget();
-  if(tgt===null){if(AU.playing)auFadeStop();auRender();return}
   let restarted=seqRunId!==AU.lastRun;
   if(restarted&&pageStart&&AU.playing){restarted=false;AU.adoptUntil=0}   // already started it
-  AU.lastRun=seqRunId;
-  if(!AU.playing||restarted){auStartAt(tgt);auRender();return}
-  if(performance.now()<AU.settle){auRender();return}  // let a seek settle first
-  const err=AU.el.currentTime-tgt;AU.err=err;
-  if(Math.abs(err)>0.25){AU.el.currentTime=tgt;AU.el.playbackRate=1;AU.settle=performance.now()+1000}
-  else AU.el.playbackRate=1-Math.max(-0.005,Math.min(0.005,err*0.5));
-  auRender();
+  const loopN=Math.floor((boxPos()+AU.offset)/seqLen);
+  const wrapped=AU.lastLoop>=0&&loopN!==AU.lastLoop&&!AU.el.loop;
+  AU.lastRun=seqRunId;AU.lastLoop=loopN;
+  const tgt=auTarget();
+  if(tgt===null){if(AU.playing)auFadeStop();auRender();return}
+  if(!AU.playing||restarted||wrapped){auStartAt(tgt);AU.lastLoop=loopN;auRender();return}
+  auMeasure();auRender();
+}
+// Audio minus box, ms (+ = audio ahead of the lights). A poll's box position is
+// only as good as its round trip is symmetric, so keep the last few and trust the
+// one with the shortest round trip. Following, a nudge moves the box by that
+// error; the window then refills before the next one.
+function auMeasure(){
+  if(performance.now()<AU.settle)return;   // let a start or a nudge land first
+  let e=AU.el.currentTime*1000-(((boxPos()+AU.offset)%seqLen)+seqLen)%seqLen;
+  if(e>seqLen/2)e-=seqLen;else if(e<-seqLen/2)e+=seqLen;   // either side of a wrap
+  AU.samples.push({e,rtt:seqRtt});
+  if(AU.samples.length>AU_WINDOW)AU.samples.shift();
+  const best=AU.samples.reduce((a,b)=>b.rtt<a.rtt?b:a);
+  AU.err=best.e/1000;
+  if(!AU.follow||AU.samples.length<AU_WINDOW||Math.abs(best.e)<AU_DEADBAND)return;
+  const ms=Math.round(Math.max(-AU_MAXNUDGE,Math.min(AU_MAXNUDGE,best.e)));
+  post(`/api/seq/nudge?ms=${ms}&run=${seqRunId}`);
+  AU.samples=[];AU.settle=performance.now()+1000;
 }
 function auRender(){
   document.getElementById('aubanner').style.display=auLocked()?'':'none';
@@ -1318,7 +1353,8 @@ function auRender(){
   let s;
   if(!AU.url)s='choose the track file on this computer';
   else if(auLocked())s='locked — click anywhere on the page to enable audio';
-  else if(AU.playing)s='playing'+(AU.err!==null?` (${AU.err>=0?'+':'−'}${Math.round(Math.abs(AU.err)*1000)} ms)`:'');
+  else if(AU.playing)s='playing'+(AU.err!==null?` (${AU.err>=0?'+':'−'}${Math.round(Math.abs(AU.err)*1000)} ms)`:'')
+    +(AU.follow?' · lights follow the audio':' · free-running');
   else s='armed — plays when the sequence runs';
   if(AU.dur&&seqLen&&Math.abs(AU.dur*1000-seqLen)>1000)
     s+=` · track ${fmt1(AU.dur*1000)} vs loop ${fmt1(seqLen)} — lengths differ`;
@@ -1379,7 +1415,7 @@ async function poll(){
     const sc=document.getElementById('seqcard');
     sc.style.display=(d.mode==='Performance')?'':'none';
     // seq_t was sampled mid-request: credit half the round trip.
-    seqRun=d.running;seqT=d.seq_t+(d.running?(t1-t0)/2:0);seqAt=t1;
+    seqRun=d.running;seqT=d.seq_t+(d.running?(t1-t0)/2:0);seqAt=t1;seqRtt=t1-t0;
     seqLen=d.seq_len||0;seqRunId=d.run_id||0;curMode=d.mode;
     // Refetch the timeline whenever the loaded piece changes — including when
     // another phone changed it, which no local seq=null would have caught.
@@ -1410,6 +1446,7 @@ async function poll(){
 // button is then heard within ~0.5 s rather than 2 s.
 function pollLoop(){poll().finally(()=>setTimeout(pollLoop,AU.on?500:2000))}
 AU.offset=+lsGet('au_off',0)||0;document.getElementById('auoff').value=AU.offset;
+AU.follow=lsGet('au_follow','1')==='1';document.getElementById('aufollow').checked=AU.follow;
 if(lsGet('au_on','0')==='1'){
   AU.on=true;document.getElementById('auon').checked=true;
   document.getElementById('aubody').style.display='';

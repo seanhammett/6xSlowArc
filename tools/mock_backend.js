@@ -174,6 +174,16 @@
       return json({ ok: true });
     },
 
+    // SequenceEngine::nudge(): shift the clock, never back past this run's start.
+    'POST /api/seq/nudge': q => {
+      if (!q.has('ms') || !q.has('run')) return text('missing ms/run', 400);
+      const ms = parseInt(q.get('ms'), 10);
+      if (!(ms >= -5000 && ms <= 5000)) return text('bad ms', 400);
+      if (eng.running && parseInt(q.get('run'), 10) === eng.runId)
+        eng.startAt -= Math.max(ms, -(Date.now() - eng.startAt));
+      return json({ ok: true });
+    },
+
     // Name + loop length in the query, "t_ms:mask:ramp_ms,..." in the body —
     // parsed and rejected the way WebUi.cpp's parseSeqSave does.
     'POST /api/seq/save': (q, body) => {

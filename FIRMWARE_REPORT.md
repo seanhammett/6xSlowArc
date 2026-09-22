@@ -257,6 +257,7 @@ as queued rather than silently leaving the timeline apparently unchanged.
 | `GET /api/seqs` | list stored sequences + the active slot |
 | `GET /api/seq?i=N` | one stored sequence definition |
 | `POST /api/seq/select` | make slot N active |
+| `POST /api/seq/nudge` | `?ms=N&run=R`: shift the running sequence's clock by N ms (±5000), ignored unless R is the current run — the audio card's lights‑follow |
 | `POST /api/seq/save` | save a sequence: `name`, `loop_ms` in the query; `t_ms:mask:ramp_ms,…` in a text/plain body (≤ 24 KB) |
 
 Sequences are served as `{"name","len","steps":[[t_ms,mask,ramp_ms],…]}` (`len` = the loop
@@ -269,10 +270,15 @@ only the playhead redraws).
 
 **Synced audio** — the page's Audio card plays a track chosen on the laptop (kept in the
 browser's IndexedDB; never sent to the box) in step with the sequence. It is opt‑in per
-browser, and follows the box's clock: `seq_t` plus half the poll round trip, polled every
-500 ms while armed. Errors under 250 ms are corrected by nudging `playbackRate` by up to
-±0.5 % (pitch preserved); larger ones re‑seek; a changed `run_id` restarts it; stop or
-Gallery fades it out over 1.5 s. A per‑browser offset absorbs output latency.
+browser, polled every 500 ms while armed. The audio is the master and is never seeked or
+rate‑changed while playing (both are audible): it is started at the box's position
+(`seq_t` plus half the poll round trip) when a run starts — a changed `run_id` restarts it
+— and loops itself when its length matches the loop's (else it restarts at each wrap).
+Stop or Gallery fades it out over 1.5 s on the element's volume. With "keep the lights in
+step" on, the page takes audio − box from the lowest‑round‑trip poll of the last four and,
+past 20 ms, posts `POST /api/seq/nudge` (≤ ±250 ms), which shifts the engine's start time
+(`SequenceEngine::nudge()`; frames are computed from position, so no step is skipped or
+repeated). A per‑browser offset absorbs output latency.
 | `GET /api/scan` | async WiFi scan (202 while running, 200 + list when done) |
 | `POST /api/wifi` | store station credentials |
 

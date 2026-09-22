@@ -292,9 +292,15 @@ on the laptop; it is never sent to the box.
 
 From then on the music follows the lights, however the sequence is started — the Play
 button on this page, the front-panel button, or another phone. It starts at the same
-point in the piece as the arcs, keeps in step on its own, and fades out when the sequence
-stops or the box goes to Gallery. The status line shows how closely it's following, e.g.
-`playing (+8 ms)`.
+point in the piece as the arcs and fades out when the sequence stops or the box goes to
+Gallery. Once playing, the music is never adjusted — any jump in it would be heard.
+
+With **Keep the lights in step with the audio** ticked (the default), the page instead
+nudges the *sequence* a few milliseconds at a time to stay with the music; nobody can see
+the arcs move 20 ms early or late. Unticked, music and lights simply run side by side from
+a common start. The status line shows how closely they agree, e.g.
+`playing (+8 ms) · lights follow the audio`. Tick it on one browser only: two laptops
+following two copies of the track would pull the sequence between them.
 
 - **Match the lengths.** The sequence's loop length should equal the track's length — a
   40:00 track needs a sequence that closes at 2400 s (see the END row in §8). The card
@@ -303,8 +309,8 @@ stops or the box goes to Gallery. The status line shows how closely it's followi
   number plays the sound earlier. Bluetooth speakers need several hundred ms; a cable or
   USB sound interface needs little or none.
 - **Use a compressed copy of the track** such as a 256 kbps AAC `.m4a`. It sounds the
-  same as the master and works in every browser. Chrome and Edge also accept a full-size
-  WAV.
+  same as the master and works in every browser. For no loss at all, a FLAC copy is
+  about 40% smaller than the WAV; Chrome and Edge also accept the full-size WAV.
 - **Keep the page open and in front**, and set the laptop never to sleep. Turn off
   notification and alert sounds, or they'll come out of the show speakers too.
 

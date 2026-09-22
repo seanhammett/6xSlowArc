@@ -65,6 +65,13 @@ void SequenceEngine::stop() {
   running_ = false;
 }
 
+void SequenceEngine::nudge(int32_t ms) {
+  if (!running_) return;
+  uint32_t elapsed = millis() - startMs_;
+  if (ms < 0 && (uint32_t)(-ms) > elapsed) ms = -(int32_t)elapsed;
+  startMs_ -= (uint32_t)ms;                        // earlier start = later position
+}
+
 uint32_t SequenceEngine::positionMs() const {
   uint32_t loopLen = loopLen_;
   if (!running_ || loopLen == 0) return 0;

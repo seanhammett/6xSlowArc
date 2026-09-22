@@ -46,8 +46,9 @@ class WebUi {
   // onWifiCredentials receives (ssid, pass) from the WiFi setup card.
   // onSequenceActivated fires when the active sequence changes (selection, or
   // a save that touches the active slot) so main can hand it to the engine.
-  // onMode / onRun receive mode and play/stop commands. All three run on the
-  // web task, so main queues them for its loop rather than acting on them here.
+  // onMode / onRun receive mode and play/stop commands; onNudge receives
+  // (ms, run id) sequence-clock nudges from a browser's audio follow. All run on
+  // the web task, so main queues them for its loop rather than acting on them here.
   void begin(ChannelModel* model, ConfigStore* store, SequenceStore* seqStore,
              bool* arcEnabled,
              std::function<String()> stateJson,
@@ -55,7 +56,8 @@ class WebUi {
              std::function<void(const String&, const String&)> onWifiCredentials,
              std::function<void(uint8_t)> onSequenceActivated,
              std::function<void(Mode)> onMode,
-             std::function<void(bool)> onRun);
+             std::function<void(bool)> onRun,
+             std::function<void(int32_t, uint32_t)> onNudge);
 
  private:
   ChannelModel*           model_ = nullptr;
@@ -68,4 +70,5 @@ class WebUi {
   std::function<void(uint8_t)> seqActivated_;
   std::function<void(Mode)>    onMode_;
   std::function<void(bool)>    onRun_;
+  std::function<void(int32_t, uint32_t)> onNudge_;
 };

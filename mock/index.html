@@ -53,7 +53,6 @@
   .seg button.on{border-color:#9ad;color:#fff;background:#34405a}
   #playbtn{min-width:5.5rem}
   #playbtn.run{border-color:#3c6;color:#3c6}
-  #ovmsg{font-size:.85rem;color:#fb4}
   .dot{display:inline-block;width:.6rem;height:.6rem;border-radius:50%;margin-right:.3rem;vertical-align:middle}
   .ok{background:#3c6}.warn{background:#fb4}.bad{background:#e54}
   summary{cursor:pointer}
@@ -68,9 +67,36 @@
   /* Fixed width so the ticking digits never shift the header text. */
   #seqtime{display:inline-block;width:6.5rem;font-size:.85rem;color:#9ad;font-variant-numeric:tabular-nums;white-space:nowrap}
   #seqcv,#pvcv,#edcv{width:100%;height:132px;display:block;margin-top:.5rem}
-  .tabs{display:flex;gap:.4rem;margin:.6rem 0 0}
-  .tab{background:#1e2128;border:1px solid #333;border-bottom:none;border-radius:8px 8px 0 0;color:#bbb;padding:.45rem 1rem;cursor:pointer;font-size:.9rem}
-  .tab.on{background:#262a33;color:#e8e8e8;border-color:#445}
+  /* Folder tabs: the active tab and its page share one outline. The tab sits 1px
+     down over the page's top border and paints it out in the page colour, so the
+     line runs unbroken round tab and page; an inactive tab sits lower and darker,
+     behind the page's top edge. */
+  .tabs{display:flex;align-items:flex-end;gap:.3rem;margin:.6rem 0 0;position:relative;z-index:1}
+  .tab{background:#15171c;border:1px solid #2c313b;border-bottom:none;border-radius:8px 8px 0 0;color:#889;
+       padding:.4rem 1rem;margin-top:.25rem;cursor:pointer;font-size:.9rem;position:relative}
+  .tab:hover{color:#bbb}
+  .tab.on{background:#1a1d23;color:#e8e8e8;border-color:#3d4453;margin-top:0;padding-bottom:.5rem;top:1px}
+  .page{background:#1a1d23;border:1px solid #3d4453;border-radius:8px;padding:.1rem .6rem .4rem}
+  #tabbed[data-tab="0"] .page{border-top-left-radius:0}   /* the first tab meets the page's corner */
+  .page .card{background:#22262e}
+  .page .pair{background:#2a2f39}
+  /* Override card: the page's controls beside the front panel's, same height. */
+  .ovgrid{display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin-top:.5rem}
+  .ovbox{background:#1a1d23;border:1px solid #333a46;border-radius:8px;padding:.5rem .7rem;position:relative}
+  .ovbox h3{font-size:.8rem;font-weight:600;color:#9ad;margin:0 0 .1rem}
+  .ovbox .seg{margin-top:.35rem}
+  .ovbox .note{font-size:.75rem;color:#889;margin-top:.4rem}
+  /* The front panel as it sits: lit segment = the switch's position. Display only. */
+  .ind{display:inline-block;padding:.25rem .6rem;border:1px solid #333a46;border-radius:6px;color:#667;font-size:.85rem}
+  .ind.on{border-color:#9ad;color:#fff;background:#34405a}
+  #phys.over{border-color:#e88}
+  #phys.over .physin{opacity:.35}
+  #physov{display:none;position:absolute;inset:0;align-items:center;justify-content:center;flex-direction:column;
+          text-align:center;padding:.5rem;pointer-events:none}
+  #phys.over #physov{display:flex}
+  #physov b{color:#f99;font-size:.95rem;background:rgba(21,23,28,.85);padding:.2rem .6rem;border-radius:6px}
+  #physov span{font-size:.72rem;color:#ccc;margin-top:.3rem;background:rgba(21,23,28,.85);padding:.1rem .4rem;border-radius:4px}
+  .wifiask{flex-basis:100%;border-top:1px solid #333a46;padding-top:.45rem;color:#fb4}
   select{background:#15171c;border:1px solid #444;border-radius:6px;color:#e8e8e8;padding:.4rem .6rem}
   input[type=number]{background:#15171c;border:1px solid #444;border-radius:6px;color:#e8e8e8;padding:.25rem .4rem;width:4.5rem}
   .step{display:flex;gap:.4rem;align-items:center;margin:.25rem 0;font-size:.85rem;flex-wrap:wrap}
@@ -98,6 +124,10 @@
      six columns have to be scrolled sideways. */
   @media (max-width:680px){
     body{padding:.5rem}
+    .page{padding:.1rem .3rem .3rem}
+    .page .card{padding:.75rem .55rem}   /* gives back the width the page's frame costs the rack */
+    .ovgrid{gap:.4rem}
+    .ovbox{padding:.45rem .5rem}
     .rack{gap:.15rem}
     .pair{padding:.4rem .1rem}
     .sls{gap:.1rem}
@@ -113,19 +143,34 @@
 <div class="banner" id="aubanner" style="display:none">🔈 Audio is armed but locked — click anywhere on this page to enable it</div>
 <h1>Slow Arc Controller</h1>
 <div class="status" id="status">connecting…</div>
+<div id="tabbed" data-tab="0">
 <div class="tabs">
  <button class="tab on" onclick="tab(0)">Control</button>
  <button class="tab" onclick="tab(1)">Sequences</button>
 </div>
-<div id="tab0">
+<div id="tab0" class="page">
 <div class="card" id="playcard">
- <b>Playback</b> — the same job as the front-panel switch and button
- <div class="seg">
-  <button id="mdG" onclick="setMode('Gallery')">Gallery</button>
-  <button id="mdP" onclick="setMode('Performance')">Performance</button>
-  <button id="playbtn" onclick="playStop()">▶ Play</button>
+ <b>Override physical controls</b>
+ <div class="ovgrid">
+  <div class="ovbox">
+   <h3>This page</h3>
+   <div class="seg">
+    <button id="mdG" onclick="setMode('Gallery')">Gallery</button>
+    <button id="mdP" onclick="setMode('Performance')">Performance</button>
+   </div>
+   <div class="seg"><button id="playbtn" onclick="playStop()">▶ Play</button></div>
+   <div class="note">Highlighted: the box's mode. Play switches to Performance.</div>
+  </div>
+  <div class="ovbox" id="phys">
+   <div class="physin">
+    <h3>Front panel</h3>
+    <div class="seg"><span class="ind" id="swG">Gallery</span><span class="ind" id="swP">Performance</span></div>
+    <div class="note">Mode switch position</div>
+    <div class="seg" style="font-size:.85rem">Sequence button: <span id="btnago">—</span></div>
+   </div>
+   <div id="physov"><b>overridden by this page</b><span id="physwhy"></span></div>
+  </div>
  </div>
- <div id="ovmsg"></div>
 </div>
 <div class="card" id="audiocard">
  <b>Audio</b> — plays a track from this computer in sync with the sequence
@@ -161,7 +206,7 @@
  <div id="wmsg"></div>
 </details>
 </div>
-<div id="tab1" style="display:none">
+<div id="tab1" class="page" style="display:none">
 <div class="card">
  <b>Active sequence</b> — plays on the next Play or button push
  <div class="wrow"><select id="seqsel" onchange="selSeq()"></select><span id="selmsg"></span></div>
@@ -188,6 +233,7 @@
  <div id="edwrap"><div id="edsteps"></div><div id="edmore"></div></div>
  <div class="wrow"><button id="edaddb" onclick="edAdd()">+ add step</button><button onclick="edSave()">Save</button></div>
  <canvas id="edcv" height="132"></canvas>
+</div>
 </div>
 </div>
 <script>
@@ -228,6 +274,7 @@
     on:         [1, 1, 1, 1, 1, 1],               // per-arc kill switches
     mode:       'Gallery',                        // the box's mode (model.mode)
     switchPos:  'Gallery',                        // where the panel switch sits
+    lastPress:  0,                                // Date.now() of the last button push
     fault:      0,                                // 0 none, 2 DAC, 3 motor, 4 supply
     wifi:       'station',                        // station | ap | connecting
     ssid:       'Gallery-WiFi',
@@ -313,6 +360,8 @@
       on: dev.on.slice(),
       mode: dev.mode,
       override: dev.mode !== dev.switchPos,
+      switch: dev.switchPos,
+      btn_ago: dev.lastPress ? Math.floor((Date.now() - dev.lastPress) / 1000) : -1,
       running: eng.running,
       seq_t: engPosMs(),
       seq_len: eng.len,
@@ -616,7 +665,7 @@
       dev.switchPos = dev.mode = 'Performance';
       syncPanel();
     });
-    on('#mkPress', () => { eng.running ? (eng.running = false) : engStart(); syncPanel(); });
+    on('#mkPress', () => { dev.lastPress = Date.now(); eng.running ? (eng.running = false) : engStart(); syncPanel(); });
     on('#mkSta',   () => { dev.wifi = 'station'; dev.ip = '192.168.1.57'; syncPanel(); });
     on('#mkAp',    () => { dev.wifi = 'ap'; syncPanel(); });
     on('#mkOn',    () => { dev.powered = true; syncPanel(); });
@@ -740,16 +789,24 @@ function togglePwr(i){
 // Mode + playback. Re-poll straight after so the card confirms at once rather
 // than on the next 2 s tick; the poll is what the buttons show, never a guess.
 let curRun=false;
-function paintPlay(mode,running,ovr){
+function paintPlay(mode,running,ovr,sw,btnAgo){
   curRun=running;
   document.getElementById('mdG').classList.toggle('on',mode==='Gallery');
   document.getElementById('mdP').classList.toggle('on',mode==='Performance');
   const pb=document.getElementById('playbtn');
   pb.textContent=running?'■ Stop':'▶ Play';
   pb.classList.toggle('run',running);
-  document.getElementById('ovmsg').textContent=ovr
-    ?`The front-panel switch is set to ${mode==='Gallery'?'Performance':'Gallery'} — the web setting is in charge until the switch is next flipped.`:'';
+  // Front panel: the switch's own position, which the box ignores while overridden.
+  sw=sw||(ovr?(mode==='Gallery'?'Performance':'Gallery'):mode);
+  document.getElementById('swG').classList.toggle('on',sw==='Gallery');
+  document.getElementById('swP').classList.toggle('on',sw==='Performance');
+  document.getElementById('btnago').textContent=btnAgo==null?'—'
+    :btnAgo<0?'not pushed since power-up':`last pushed ${ago(btnAgo)} ago`;
+  document.getElementById('phys').classList.toggle('over',ovr);
+  document.getElementById('physwhy').textContent=ovr
+    ?`The box is in ${mode} until the switch is next flipped`:'';
 }
+function ago(s){return s<60?s+' s':s<3600?Math.floor(s/60)+' min':Math.floor(s/3600)+' h'}
 async function setMode(m){await post(`/api/mode?m=${m}`);poll();}
 async function playStop(){
   // Starting from this page: start the audio inside the click (a user gesture,
@@ -900,6 +957,7 @@ function tab(n){
   document.getElementById('tab0').style.display=n?'none':'';
   document.getElementById('tab1').style.display=n?'':'none';
   document.querySelectorAll('.tab').forEach((b,i)=>b.classList.toggle('on',i===n));
+  document.getElementById('tabbed').dataset.tab=n;
   if(n){loadSeqList();edRender();}
   else poll();      // coming back to Control: show the current piece, not a 2 s-old one
 }
@@ -1385,6 +1443,18 @@ function goOffline(){
   renderOffline();
   if(seq)drawSeq();
 }
+function wifiLine(d){
+  const ss=d.ssid?`<b>${esc(d.ssid)}</b>`:'';
+  const ip=d.ip?` (${d.ip})`:'';
+  if(d.wifi==='station')return `connected to ${ss}${ip}`;
+  if(d.wifi==='connecting')return `joining ${ss}…`;
+  if(d.wifi==='ap')return `own network ${ss}${ip}`;
+  return `<b>${d.wifi}</b>`;
+}
+function wifiOpen(){
+  tab(0);
+  const w=document.getElementById('wifi');w.open=true;w.scrollIntoView({behavior:'smooth'});
+}
 async function poll(){
   if(polling)return;              // a hung request must not stack up behind itself
   polling=true;
@@ -1406,12 +1476,15 @@ async function poll(){
       `<div>${hl}</div>`+
       `<div>Mode: <b>${d.mode}</b></div>`+
       `<div>Sequence: ${nm}${d.running?'running':'stopped'}${q}</div>`+
-      `<div>WiFi: <b>${d.wifi}</b> ${d.ip?('('+d.ip+')'):''}</div>`+
+      `<div>WiFi: ${wifiLine(d)}</div>`+
       (d.host?`<div>Address: <b><a href="http://${d.host}/">http://${d.host}</a></b></div>`:'')+
-      `<div>Uptime: <b>${d.uptime}s</b></div>`;
+      `<div>Uptime: <b>${d.uptime}s</b></div>`+
+      (d.wifi==='ap'?`<div class="wifiask"><span class="dot warn"></span>This box is serving its own WiFi `+
+        `(<b>${esc(d.ssid||'SlowArc-Setup')}</b>). Connect it to a local WiFi network in `+
+        `<a href="#wifi" onclick="wifiOpen();return false">WiFi setup</a> so it can be reached from the house network.</div>`:'');
     document.getElementById('wsum').textContent=
       `${d.wifi}${d.ssid?' · '+d.ssid:''}${d.ip?' · '+d.ip:''}${d.host?' · '+d.host:''}`;
-    paintPlay(d.mode,d.running,!!d.override);
+    paintPlay(d.mode,d.running,!!d.override,d.switch,d.btn_ago);
     const sc=document.getElementById('seqcard');
     sc.style.display=(d.mode==='Performance')?'':'none';
     // seq_t was sampled mid-request: credit half the round trip.

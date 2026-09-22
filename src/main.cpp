@@ -148,6 +148,12 @@ static String buildStateJson() {
   j += "\",";
   // The switch says something other than the box is doing (web overrode it).
   j += "\"override\":"; j += (inputs.mode() != model.mode) ? "true" : "false"; j += ',';
+  // The front panel itself, for the page's physical-controls box: where the
+  // switch sits, and seconds since the button was last pushed (-1 = not yet).
+  j += "\"switch\":\""; j += (inputs.mode() == Mode::Performance) ? "Performance" : "Gallery"; j += "\",";
+  j += "\"btn_ago\":";
+  if (inputs.lastPressMs()) j += (millis() - inputs.lastPressMs()) / 1000; else j += "-1";
+  j += ',';
   j += "\"running\":"; j += sequence.running() ? "true" : "false"; j += ',';
   j += "\"seq_t\":"; j += sequence.positionMs(); j += ',';
   // Loop length + a counter that bumps on every start: the page's audio follows

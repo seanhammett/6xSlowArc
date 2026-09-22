@@ -32,4 +32,5 @@ void InputManager::update() {
 
   // Active-LOW momentary button -> falling edge is a press.
   seqPressed_ = seqButton.fell();
+  if (seqPressed_) lastPressMs_ = millis() | 1;   // never 0, which means "none"
 }

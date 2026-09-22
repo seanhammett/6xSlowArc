@@ -69,7 +69,8 @@ Switch to Gallery to return them to their normal settings.
 **When the page overrides the switch.** If the page sets a mode different from where the
 switch sits, the page wins until the switch is next flipped. The switch then no longer
 shows the box's real mode, so the status light adds a **brief white blip every two
-seconds** on top of its normal pattern, and the page says which way the switch is set.
+seconds** on top of its normal pattern, and the page outlines the front-panel box in red
+with **overridden by this page** across it.
 Either flip the switch (twice, if it has to end up where it already is) or choose the mode
 on the page that matches the switch, and the blip stops.
 
@@ -137,12 +138,17 @@ is worth mentioning but not urgent.
 ## 6. The Control tab
 
 The top strip is the box's status at a glance: healthy or faulty, which mode, which
-sequence is selected and whether it is running, the WiFi, and how long it has been on.
+sequence is selected and whether it is running, which WiFi network it is on, and how long
+it has been on. If the box is still serving its own **SlowArc-Setup** network, an amber
+line asks you to connect it to a local WiFi network, with a link to **WiFi setup**.
 
-Under the tabs, the **Playback** card does the job of the front panel: **Gallery** and
-**Performance** choose the mode, and **▶ Play / ■ Stop** starts and stops the selected
-sequence. The highlighted button is the box's current mode. If the page has overridden
-the switch, an amber line says so (§3).
+Under the tabs, the **Override physical controls** card has two halves. On the left,
+**This page** does the job of the front panel: **Gallery** and **Performance** choose the
+mode, and **▶ Play / ■ Stop** starts and stops the selected sequence. The highlighted
+button is the box's current mode. On the right, **Front panel** shows the controls on the
+box itself: which way the mode switch is set, and when the sequence button was last
+pushed. If the page has overridden the switch, that half is outlined in red and marked
+**overridden by this page** (§3).
 
 If the strip turns red and says **OFFLINE**, the page has lost contact with the box —
 it has been powered down, or your phone has left the network. The sliders below grey

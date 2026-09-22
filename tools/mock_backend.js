@@ -35,6 +35,7 @@
     on:         [1, 1, 1, 1, 1, 1],               // per-arc kill switches
     mode:       'Gallery',                        // the box's mode (model.mode)
     switchPos:  'Gallery',                        // where the panel switch sits
+    lastPress:  0,                                // Date.now() of the last button push
     fault:      0,                                // 0 none, 2 DAC, 3 motor, 4 supply
     wifi:       'station',                        // station | ap | connecting
     ssid:       'Gallery-WiFi',
@@ -120,6 +121,8 @@
       on: dev.on.slice(),
       mode: dev.mode,
       override: dev.mode !== dev.switchPos,
+      switch: dev.switchPos,
+      btn_ago: dev.lastPress ? Math.floor((Date.now() - dev.lastPress) / 1000) : -1,
       running: eng.running,
       seq_t: engPosMs(),
       seq_len: eng.len,
@@ -423,7 +426,7 @@
       dev.switchPos = dev.mode = 'Performance';
       syncPanel();
     });
-    on('#mkPress', () => { eng.running ? (eng.running = false) : engStart(); syncPanel(); });
+    on('#mkPress', () => { dev.lastPress = Date.now(); eng.running ? (eng.running = false) : engStart(); syncPanel(); });
     on('#mkSta',   () => { dev.wifi = 'station'; dev.ip = '192.168.1.57'; syncPanel(); });
     on('#mkAp',    () => { dev.wifi = 'ap'; syncPanel(); });
     on('#mkOn',    () => { dev.powered = true; syncPanel(); });

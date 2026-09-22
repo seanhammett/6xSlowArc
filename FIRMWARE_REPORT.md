@@ -222,7 +222,7 @@ Stop behaviour is set by `SEQUENCE_STOP_HOLD` (config.h): hold the last produced
 
 Single PROGMEM page, two tabs:
 
-- **Control** — a Playback card (Gallery / Performance, Play / Stop, override notice),
+- **Control** — an Override physical controls card (Gallery / Performance, Play / Stop beside the front-panel switch position and last button push, outlined red when overridden),
   per‑arc brightness/speed sliders, a typed Hz box per arc, per‑arc on/off
   buttons, live status (mode, active sequence, running, WiFi, IP, fault, uptime), a
   timeline view of the running sequence, and the WiFi provisioning card.

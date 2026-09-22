@@ -27,8 +27,13 @@ class InputManager {
   // True for exactly one update() after a fresh button press (falling edge).
   bool sequencePressed() const { return seqPressed_; }
 
+  // millis() of the last button press, 0 if none since boot. For the status
+  // page, which polls too slowly to catch the press itself.
+  uint32_t lastPressMs() const { return lastPressMs_; }
+
  private:
   Mode mode_ = Mode::Gallery;
   bool modeChanged_ = false;
   bool seqPressed_ = false;
+  uint32_t lastPressMs_ = 0;
 };

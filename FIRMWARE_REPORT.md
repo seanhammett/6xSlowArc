@@ -82,8 +82,8 @@ sees every subsystem, so it assembles the web status snapshot and the status‑L
 | [BulbController](src/BulbController.cpp) | 3 GP8403 DACs over I²C; linear map, soft‑start ramp, inrush stagger |
 | [MotorController](src/MotorController.cpp) | 6 steppers via **MCPWM**; software accel ramp; owns EN/safe‑state |
 | [InputManager](src/InputManager.cpp) | Mode switch + sequence button (Bounce2, 25 ms) |
-| [SequenceEngine](src/SequenceEngine.cpp) | Performance‑mode choreography: expands steps+ramp into an interpolated cue table |
-| [SequenceStore](src/SequenceStore.cpp) | 8 sequence slots in NVS + the active slot; seeds the built‑in piece on first boot |
+| [SequenceEngine](src/SequenceEngine.cpp) | Performance‑mode choreography: plays a steps+ramp piece, frame by frame ([SeqFrame.h](src/SeqFrame.h)) |
+| [SequenceStore](src/SequenceStore.cpp) | 8 sequence slots as LittleFS files + the active slot in NVS; migrates old NVS sequences, seeds the built‑in piece on first boot |
 | [StatusLed](src/StatusLed.cpp) | Two WS2812s, **bit‑bang** driver, state → colour/animation |
 | [NetworkSupervisor](src/NetworkSupervisor.cpp) | Non‑blocking WiFi: NVS credentials, STA/SoftAP, captive portal |
 | [OtaService](src/OtaService.cpp) | ArduinoOTA, with a safe‑state callback before flashing |
@@ -174,23 +174,33 @@ is detected and surfaced as `Fault::Supply` for 15 s (likely bulb‑inrush rail 
 ## 5. Choreography
 
 A sequence is an **artist‑editable list of steps**, authored on the web UI's Sequences
-tab and stored in NVS ([SequenceEngine.h](src/SequenceEngine.h)):
+tab (typed in, or imported from a CSV in the browser) and stored on LittleFS
+([SeqFrame.h](src/SeqFrame.h)):
 
-- A `SeqStep` is "at time T, these arcs are on" — a timestamp plus a 6‑bit mask. Bulb and
-  motor always move together, so an arc is one bit.
-- A `SeqDef` is a name, up to `SEQ_MAX_STEPS = 32` steps, and **one shared ramp** used for
-  every rise and fall.
-- `apply()` expands that into the internal cue table: each step becomes a hold cue at
-  `T − ramp` plus a target cue at `T`, and the loop closes at `lastT + ramp` back to the
-  t=0 state. Between cues the engine interpolates linearly, so the piece eases rather
-  than snaps. The timeline loops.
+- A `SeqStep` is "at time T, these arcs are on" — a timestamp (ms, snapped to 0.1 s) plus
+  a 6‑bit mask. Bulb and motor always move together, so an arc is one bit.
+- A `SeqDef` is a name, up to `SEQ_MAX_STEPS = 1000` steps, and **one shared ramp**
+  (0.1–600 s) used for every rise and fall. It is ~8 KB, so it is never put on a task
+  stack — the loop task and the web task both use static or heap buffers.
+- `seqFrameAt()` computes the frame for any moment straight from the steps (binary
+  search): each step's state is reached at `T`, ramping linearly from the previous state
+  over `[T − ramp, T]` (squeezed when steps are closer than the ramp; same‑time steps
+  collapse to the last). Before the first step the piece holds the last step's state, so
+  the loop is seamless, and it closes at `lastT + ramp`. This is exactly what the earlier
+  expanded cue table produced — `pio test -e native` checks it value for value — without
+  the ~32 KB a 1000‑step table would need.
 
-Cue values are **scales of the stored set‑points** (255 = the set‑point, 0 = off), so the
+Frame values are **scales of the stored set‑points** (255 = the set‑point, 0 = off), so the
 choreography decides only *when* each arc moves; how bright/fast it goes stays with the
 per‑channel commissioning, and re‑commissioning retunes the piece automatically.
 
-`SequenceStore` keeps `SEQ_SLOTS = 8` slots plus the active index. On first boot it seeds
-slot 0 with the built‑in piece **"Original"** (4 s ramp, 56 s holds: the arcs wake one at
+`SequenceStore` keeps `SEQ_SLOTS = 8` slots as files (`/seq/<slot>.bin`, a header plus the
+raw steps) on the stock table's otherwise unused 1.5 MB `spiffs` partition, and the active
+index in NVS — eight 8 KB sequences don't fit the 20 KB NVS partition. Saves go to a temp
+file renamed over the slot, so a reader never sees half a sequence. On the first boot of
+this layout it migrates any sequences the older firmware kept as NVS blobs (the blobs are
+left in place, so that firmware can be flashed back). On a fresh box it seeds slot 0 with
+the built‑in piece **"Original"** (4 s ramp, 56 s holds: the arcs wake one at
 a time, all six hold, then fall away in the same order; the loop closes at 668 s). Saving
 by name overwrites the matching slot or takes the first free one. Selecting or re‑saving
 the active sequence hands it to the engine — live if stopped, queued for the next Play /
@@ -224,23 +234,35 @@ disabled, and the sequence playhead stops extrapolating. Without the timeout a p
 box whose power has been cut sits in the OS connect timeout for a minute or more while the
 page goes on claiming `healthy` — which is exactly what it did before.
 
-**Sequence identity** — the engine reports the name of the cue table it holds (`seq_name`)
+**Sequence identity** — the engine reports the name of the piece it holds (`seq_name`)
 and of any queued replacement (`seq_queued`). The UI names the piece in both the status
-strip and the timeline header, and refetches the cue table whenever `seq_name` changes —
+strip and the timeline header, and refetches the piece whenever `seq_name` changes —
 so a selection made from another phone shows up too. A selection made mid‑play is reported
 as queued rather than silently leaving the timeline apparently unchanged.
 
 | Route | Purpose |
 |-------|---------|
 | `GET /` | the page |
-| `GET /api/state` | JSON snapshot: set‑points (`speed` in Hz), per‑arc on/off, mode, running, `seq_t`, `seq_name`/`seq_queued`, wifi/ssid/ip/host, fault, uptime |
+| `GET /api/state` | JSON snapshot: set‑points (`speed` in Hz), per‑arc on/off, mode, running, `seq_t`, `seq_len`, `run_id` (bumps on every start), `seq_name`/`seq_queued`, wifi/ssid/ip/host, fault, uptime |
 | `POST /api/set` | write one channel's `brightness` (0..255) and/or `speed` (**Hz**, clamped to 0 or 60..8000) |
 | `POST /api/arc` | per‑arc kill switch (runtime only, not saved) |
-| `GET /api/sequence` | the engine's current cue table (timeline view) |
+| `GET /api/sequence` | the piece the engine is playing (timeline view) |
 | `GET /api/seqs` | list stored sequences + the active slot |
 | `GET /api/seq?i=N` | one stored sequence definition |
 | `POST /api/seq/select` | make slot N active |
-| `POST /api/seq/save` | save a sequence (name, ramp, steps) |
+| `POST /api/seq/save` | save a sequence: `name`, `ramp_ms` in the query; `t_ms:mask,…` in a text/plain body (≤ 16 KB) |
+
+Sequences are served as `{"name","ramp_ms","len","steps":[[t_ms,mask],…]}`, streamed
+(`AsyncResponseStream`) rather than built as one `String` — a 1000‑step piece is ~12 KB.
+The page draws the timeline itself from the steps (painted once into an offscreen canvas;
+only the playhead redraws).
+
+**Synced audio** — the page's Audio card plays a track chosen on the laptop (kept in the
+browser's IndexedDB; never sent to the box) in step with the sequence. It is opt‑in per
+browser, and follows the box's clock: `seq_t` plus half the poll round trip, polled every
+500 ms while armed. Errors under 250 ms are corrected by nudging `playbackRate` by up to
+±0.5 % (pitch preserved); larger ones re‑seek; a changed `run_id` restarts it; stop or
+Gallery fades it out over 1.5 s. A per‑browser offset absorbs output latency.
 | `GET /api/scan` | async WiFi scan (202 while running, 200 + list when done) |
 | `POST /api/wifi` | store station credentials |
 
@@ -298,7 +320,7 @@ The board went through a multi‑stage boot‑loop diagnosis; all fixed:
 ## 9. Known limits & TODO
 
 - **No spare MCPWM timer** — all 6 are used; a 7th independent motor would need another approach.
-- **Sequence slots are fixed‑size** — 8 slots × 32 steps, stored as a raw struct. A layout change invalidates saved sequences (a size mismatch reads as absent, so it degrades safely rather than corrupting).
+- **Sequence files carry a magic number** (`SEQ2`) and a step count, and are rejected if either is wrong or the file is short — a future layout change reads as absent rather than corrupting. 8 slots × 1000 steps.
 - **Kill switches don't persist** — deliberate: a box power‑cycled after hours comes back with every arc live.
 - **DAC false‑ACK** — the GP8403 library bit‑bangs I²C and can read a false ACK on a floating bus; the `test_dac` env scans the bus first to catch missing boards.
 - **Supply** — the spec warns of inrush sag on the shared bulb rail; add bulk capacitance if brownout faults appear.

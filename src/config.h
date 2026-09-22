@@ -88,9 +88,14 @@ static constexpr char     OTA_HOSTNAME[]   = "slow-arc";
 //                   false = snap back to the static gallery set-points.
 static constexpr bool SEQUENCE_STOP_HOLD = true;
 
-// Artist-editable sequences (web UI "Sequences" tab, persisted to NVS).
-static constexpr uint8_t SEQ_MAX_STEPS = 32;   // steps per sequence
-static constexpr uint8_t SEQ_SLOTS     = 8;    // stored sequence slots
+// Artist-editable sequences (web UI "Sequences" tab, persisted as files on the
+// LittleFS "spiffs" partition — at this size they no longer fit the 20 KB NVS).
+// A SeqDef is ~8 KB at 1000 steps: never put one on a task stack.
+static constexpr uint16_t SEQ_MAX_STEPS = 1000; // steps per sequence
+static constexpr uint8_t  SEQ_SLOTS     = 8;    // stored sequence slots
+static constexpr uint32_t SEQ_TIME_RES_MS = 100;     // step/ramp times snap to 0.1 s
+static constexpr uint32_t SEQ_RAMP_MIN_MS = 100;
+static constexpr uint32_t SEQ_RAMP_MAX_MS = 600000;
 
 // ---------------------------------------------------------------------------
 // Watchdog

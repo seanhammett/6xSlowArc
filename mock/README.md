@@ -15,8 +15,10 @@ literal in [`../src/WebUi.cpp`](../src/WebUi.cpp) and injects
 script. The mock replaces `window.fetch` with an in-memory implementation of
 every endpoint (`/api/state`, `/api/sequence`, `/api/seqs`, `/api/seq`,
 `/api/seq/select`, `/api/seq/save`, `/api/set`, `/api/mode`, `/api/run`, `/api/arc`, `/api/scan`,
-`/api/wifi`), including its own copy of `SequenceEngine::expand`, so what you
-record is pixel-for-pixel what the box serves.
+`/api/wifi`), with the same sequence API as the firmware (steps in ms, saves
+with the steps in the request body, `seq_len`/`run_id` in the state), so what
+you record is pixel-for-pixel what the box serves. The Audio card works too:
+tick it, choose a local track, and it follows the simulated sequence.
 
 **Do not edit `index.html`** — it is generated. Change the UI in `WebUi.cpp`,
 the simulation in `mock_backend.js`, then:

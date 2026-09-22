@@ -23,7 +23,7 @@
   const MOTOR_MIN_SPEED_HZ = 60;
   const MOTOR_MAX_SPEED_HZ = 8000;
   const SEQ_SLOTS = 8;
-  const SEQ_MAX_STEPS = 32;
+  const SEQ_MAX_STEPS = 1000;
 
   // --- The simulated box -----------------------------------------------------
   // Set-points are a plausibly commissioned rig rather than ChannelModel's
@@ -70,62 +70,36 @@
     null, null, null, null, null,
   ];
 
-  let seqs = FRESH_SEQS();
+  // Literals above are in seconds with one ramp each, for readability; the box
+  // keeps ms, a ramp per step, and the loop length (here last step + ramp).
+  const toMs = d => d && { name: d.name,
+                           loopMs: (d.steps[d.steps.length - 1].t + d.ramp) * 1000,
+                           steps: d.steps.map(s => ({ t: s.t * 1000, m: s.m, r: d.ramp * 1000 })) };
+  let seqs = FRESH_SEQS().map(toMs);
   let activeSlot = 0;
 
   // --- SequenceEngine --------------------------------------------------------
-  // expand() mirrors SequenceEngine::expand: each step becomes a hold cue at
-  // (t - ramp) plus a target cue at t, t=0 carries the last step's state so the
-  // loop is seamless, and the table closes at lastT + ramp.
-  function expand(def) {
-    const cues = [];
-    const put = (t, mask) => {
-      if (cues.length && cues[cues.length - 1].t === t) cues.pop();  // same-time dup
-      const b = [], s = [];
-      for (let ch = 0; ch < N; ch++) {
-        const v = (mask >> ch) & 1 ? 255 : 0;      // bulb + motor move together
-        b.push(v); s.push(v);
-      }
-      cues.push({ t, b, s });
-    };
-    if (!def || !def.steps.length) return { len: 0, cues: [] };
-    const steps = [...def.steps].sort((a, b) => a.t - b.t);
-    const ramp = def.ramp * 1000;
-    const lastMask = steps[steps.length - 1].m;
-    let prevMask = lastMask, prevT = 0;
-    put(0, lastMask);                              // loop-seamless start state
-    for (const st of steps) {
-      const t = st.t * 1000;
-      let hold = t > ramp ? t - ramp : 0;
-      if (hold < prevT) hold = prevT;              // ramp squeezed by close steps
-      put(hold, prevMask);
-      put(t, st.m);
-      prevMask = st.m; prevT = t;
-    }
-    put(prevT + ramp, lastMask);                   // END: closes the loop
-    return { len: cues[cues.length - 1].t, cues };
-  }
+  // The box evaluates frames straight from the steps (SeqFrame.h); the page
+  // draws them itself, so all the mock needs is the piece and its loop length.
+  const loopLen = d => d && d.steps.length ? d.loopMs : 0;
+  const seqJson = d => ({ name: d ? d.name : '', len: loopLen(d),
+                          steps: d ? d.steps.map(s => [s.t, s.m, s.r]) : [] });
 
-  const eng = { name: '', table: { len: 0, cues: [] }, queued: null,
-                running: false, startAt: 0 };
+  const eng = { def: null, len: 0, queued: null, running: false, startAt: 0, runId: 0 };
 
   function engApply(def) {
     if (eng.running) { eng.queued = def; return; }  // takes effect on next start
-    eng.name = def.name;
-    eng.table = expand(def);
+    eng.def = def; eng.len = loopLen(def);
   }
   function engStart() {
-    if (eng.queued) {
-      eng.name = eng.queued.name;
-      eng.table = expand(eng.queued);
-      eng.queued = null;
-    }
+    if (eng.queued) { eng.def = eng.queued; eng.len = loopLen(eng.queued); eng.queued = null; }
+    eng.runId++;
     eng.running = true;
     eng.startAt = Date.now();
   }
   function engPosMs() {
-    if (!eng.running || !eng.table.len) return 0;
-    return (Date.now() - eng.startAt) % eng.table.len;
+    if (!eng.running || !eng.len) return 0;
+    return (Date.now() - eng.startAt) % eng.len;
   }
   engApply(seqs[activeSlot]);
 
@@ -148,7 +122,9 @@
       override: dev.mode !== dev.switchPos,
       running: eng.running,
       seq_t: engPosMs(),
-      seq_name: eng.name,
+      seq_len: eng.len,
+      run_id: eng.runId,
+      seq_name: eng.def ? eng.def.name : '',
       seq_queued: eng.queued ? eng.queued.name : '',
       wifi: dev.wifi,
       ssid: dev.wifi === 'ap' ? 'SlowArc-Setup' : dev.ssid,
@@ -177,7 +153,7 @@
   const HANDLERS = {
     'GET /api/state': () => json(stateJson()),
 
-    'GET /api/sequence': () => json(eng.table),
+    'GET /api/sequence': () => json(seqJson(eng.def)),
 
     'GET /api/seqs': () => json({
       active: activeSlot,
@@ -187,9 +163,7 @@
     'GET /api/seq': q => {
       const i = parseInt(q.get('i'), 10);
       if (!(i >= 0 && i < SEQ_SLOTS) || !seqs[i]) return text('no such sequence', 404);
-      const d = seqs[i];
-      return json({ name: d.name, ramp: d.ramp,
-                    steps: d.steps.map(s => ({ t: s.t, m: s.m })) });
+      return json(seqJson(seqs[i]));
     },
 
     'POST /api/seq/select': q => {
@@ -200,26 +174,43 @@
       return json({ ok: true });
     },
 
-    'POST /api/seq/save': q => {
-      if (!q.has('name') || !q.has('ramp') || !q.has('steps'))
-        return text('missing name/ramp/steps', 400);
+    // SequenceEngine::nudge(): shift the clock, never back past this run's start.
+    'POST /api/seq/nudge': q => {
+      if (!q.has('ms') || !q.has('run')) return text('missing ms/run', 400);
+      const ms = parseInt(q.get('ms'), 10);
+      if (!(ms >= -5000 && ms <= 5000)) return text('bad ms', 400);
+      if (eng.running && parseInt(q.get('run'), 10) === eng.runId)
+        eng.startAt -= Math.max(ms, -(Date.now() - eng.startAt));
+      return json({ ok: true });
+    },
+
+    // Name + loop length in the query, "t_ms:mask:ramp_ms,..." in the body —
+    // parsed and rejected the way WebUi.cpp's parseSeqSave does.
+    'POST /api/seq/save': (q, body) => {
+      if (!q.has('name') || !q.has('loop_ms')) return text('missing name/loop_ms', 400);
+      if (typeof body !== 'string' || !body.length) return text('missing steps (or body over 24 KB)', 400);
       const name = q.get('name').slice(0, 23);      // SeqDef::name is char[24]
-      const ramp = Math.min(600, Math.max(1, parseInt(q.get('ramp'), 10) || 0));
+      if (!name) return text('missing name', 400);
+      const snap = ms => Math.round(Math.max(0, ms) / 100) * 100;
       const steps = [];
-      for (const part of q.get('steps').split(',')) {
-        if (steps.length >= SEQ_MAX_STEPS) break;
-        const m = /^(-?\d+):(-?\d+)$/.exec(part.trim());
-        if (!m) break;                              // firmware stops at the first
-        steps.push({ t: Math.max(0, parseInt(m[1], 10)),   // malformed pair too
-                     m: parseInt(m[2], 10) & 0x3F });
+      for (const part of body.trim().split(',')) {
+        if (steps.length >= SEQ_MAX_STEPS) return text('too many steps (max 1000)', 400);
+        const m = /^(-?\d+):(\d+):(\d+)$/.exec(part.trim());
+        if (!m) return text('bad step (want t_ms:mask:ramp_ms)', 400);
+        if (+m[2] > 63) return text('bad step mask (0..63)', 400);
+        if (+m[3] > 600000) return text('bad step ramp (0..600000 ms)', 400);
+        steps.push({ t: snap(parseInt(m[1], 10)), m: +m[2], r: snap(+m[3]) });
       }
-      if (!steps.length || !name) return text('bad definition', 400);
-      steps.sort((a, b) => a.t - b.t);
-      const def = { name, ramp, steps };
+      if (!steps.length) return text('no steps', 400);
+      steps.sort((a, b) => a.t - b.t);               // stable, like the firmware's
+      const loopMs = snap(parseInt(q.get('loop_ms'), 10) || 0);
+      if (!loopMs || loopMs < steps[steps.length - 1].t)
+        return text('loop must end at or after the last step', 400);
+      const def = { name, loopMs, steps };
       // saveByName: same name overwrites, otherwise the first free slot.
       let slot = seqs.findIndex(s => s && s.name === name);
       if (slot < 0) slot = seqs.findIndex(s => !s);
-      if (slot < 0) return text('sequence slots full', 507);
+      if (slot < 0) return text('sequence slots full (or storage write failed)', 507);
       seqs[slot] = def;
       if (slot === activeSlot) engApply(def);
       return json({ ok: true, slot });
@@ -311,7 +302,7 @@
       // A few ms of latency keeps the optimistic UI (the on/off buttons) honest.
       setTimeout(() => {
         if (!dev.powered) { fail(); return; }
-        try { resolve(handler(u.searchParams)); } catch (e) { fail(); }
+        try { resolve(handler(u.searchParams, init && init.body)); } catch (e) { fail(); }
       }, 25 + Math.random() * 45);
     });
   };
@@ -333,7 +324,7 @@
     press.disabled = dev.mode !== 'Performance';
     press.textContent = eng.running ? 'press — stop' : 'press — start';
 
-    const pos = panel.querySelector('#mkpos'), len = eng.table.len;
+    const pos = panel.querySelector('#mkpos'), len = eng.len;
     pos.disabled = !len;
     if (len && document.activeElement !== pos)
       pos.value = Math.round(engPosMs() / len * 1000);
@@ -440,7 +431,7 @@
     on('#mkclose', toggleShown);
     on('#mkReset', () => {
       Object.assign(dev, FRESH());
-      seqs = FRESH_SEQS();
+      seqs = FRESH_SEQS().map(toMs);
       activeSlot = 0;
       eng.running = false;
       eng.queued = null;
@@ -455,9 +446,9 @@
     // Scrubbing rebases the engine's start time, so the page goes on
     // extrapolating the playhead at 1x from wherever you drop it.
     panel.querySelector('#mkpos').addEventListener('input', e => {
-      if (!eng.table.len) return;
+      if (!eng.len) return;
       if (!eng.running) engStart();
-      eng.startAt = Date.now() - Math.round(+e.target.value / 1000 * eng.table.len);
+      eng.startAt = Date.now() - Math.round(+e.target.value / 1000 * eng.len);
       syncPanel();
     });
 

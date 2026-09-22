@@ -30,6 +30,7 @@
 
 #include <Arduino.h>
 #include <atomic>
+#include <new>
 #include <esp_task_wdt.h>
 #include <esp_system.h>
 
@@ -81,6 +82,7 @@ static bool arcOn_[NUM_CHANNELS] = { true, true, true, true, true, true };
 static std::atomic<int8_t> webMode_{-1};    // (int8_t)Mode
 static std::atomic<int8_t> webRun_{-1};     // 0 = stop, 1 = play
 static std::atomic<int8_t> webSeqSlot_{-1}; // stored slot to hand to the engine
+static std::atomic<int32_t> webNudgeMs_{0}; // summed audio-follow nudges, 0 = none
 
 // -------------------------------------------------------------------------
 // Watchdog. A hang resets the chip; the EN pull-ups then hold the motors
@@ -148,6 +150,10 @@ static String buildStateJson() {
   j += "\"override\":"; j += (inputs.mode() != model.mode) ? "true" : "false"; j += ',';
   j += "\"running\":"; j += sequence.running() ? "true" : "false"; j += ',';
   j += "\"seq_t\":"; j += sequence.positionMs(); j += ',';
+  // Loop length + a counter that bumps on every start: the page's audio follows
+  // the box's clock with these (and tells a restart from ordinary progress).
+  j += "\"seq_len\":"; j += sequence.loopLengthMs(); j += ',';
+  j += "\"run_id\":"; j += sequence.runId(); j += ',';
   // Which piece is loaded, and which one is waiting for the next button push.
   // The UI names the timeline from these and refetches the cue table whenever
   // seq_name changes, so a selection made on another phone still shows up.
@@ -183,28 +189,19 @@ static String buildStateJson() {
 // next button push while running. Loop task only — the web UI's select /
 // save-active posts the slot to webSeqSlot_ and loop() calls this.
 static void onSequenceActivated(uint8_t slot) {
-  SeqDef def;
+  static SeqDef def;                          // ~8 KB: static, never on the stack
   if (seqStore.load(slot, def)) sequence.apply(def);
 }
 
-// The choreography table for the web UI's timeline view (fetched once).
-// Values are scales of the set-points (255 = the set-point).
-static String buildSequenceJson() {
-  String j;
-  j.reserve(1024);
-  j += "{\"len\":"; j += sequence.loopLengthMs(); j += ",\"cues\":[";
-  for (uint16_t i = 0; i < sequence.cueCount(); ++i) {
-    const Cue& c = sequence.cues()[i];
-    if (i) j += ',';
-    j += "{\"t\":"; j += c.timeMs;
-    j += ",\"b\":[";
-    for (uint8_t ch = 0; ch < NUM_CHANNELS; ++ch) { if (ch) j += ','; j += c.brightness[ch]; }
-    j += "],\"s\":[";
-    for (uint8_t ch = 0; ch < NUM_CHANNELS; ++ch) { if (ch) j += ','; j += c.speed[ch]; }
-    j += "]}";
-  }
-  j += "]}";
-  return j;
+// The piece the engine is playing, for the web UI's timeline (fetched when the
+// loaded piece changes): {"name","ramp_ms","len","steps":[[t_ms,mask],...]}.
+// Runs on the web task, so it serialises a snapshot rather than the live piece.
+static void writeSequenceJson(Print& out) {
+  SeqDef* d = new (std::nothrow) SeqDef;      // ~8 KB: heap, not the web task's stack
+  if (!d) { out.print("{}"); return; }
+  sequence.snapshot(*d);
+  printSeqJson(out, *d);
+  delete d;
 }
 
 // Change the box's mode, persisting only a real change (debounced NVS commit).
@@ -259,13 +256,16 @@ void setup() {
     if (wdtSubscribed_) { esp_task_wdt_delete(NULL); wdtSubscribed_ = false; }
   });
 
-  webUi.begin(&model, &configStore, &seqStore, arcOn_, buildStateJson, buildSequenceJson,
+  webUi.begin(&model, &configStore, &seqStore, arcOn_, buildStateJson, writeSequenceJson,
               [](const String& ssid, const String& pass) {
                 network.setCredentials(ssid, pass);   // NVS + immediate attempt
               },
               [](uint8_t slot) { webSeqSlot_ = (int8_t)slot; },
               [](Mode m) { webMode_ = (int8_t)m; },
-              [](bool on) { webRun_ = on ? 1 : 0; });
+              [](bool on) { webRun_ = on ? 1 : 0; },
+              [](int32_t ms, uint32_t run) {
+                if (run == sequence.runId()) webNudgeMs_ += ms;
+              });
 
   watchdogBegin();
 }
@@ -283,6 +283,11 @@ void loop() {
   // made just ahead of Play is the piece that starts.
   int8_t ws = webSeqSlot_.exchange(-1);
   if (ws >= 0) onSequenceActivated((uint8_t)ws);
+
+  // Audio follow: a browser nudging the sequence clock toward its track. Before
+  // playback, so a nudge queued for the old run is spent before any restart.
+  int32_t wn = webNudgeMs_.exchange(0);
+  if (wn != 0) sequence.nudge(wn);
 
   // Web playback. Play implies Performance, so it works from Gallery in one tap,
   // and is a no-op while already playing so a double tap can't restart the piece.

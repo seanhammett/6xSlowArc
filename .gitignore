@@ -7,3 +7,5 @@
 # Local secrets — real values live here; commit secrets.h.example instead
 src/secrets.h
 audio/ShadowsOfTheMechanism-MECH01D-30.wav
+audio/ShadowsOfTheMechanism-MECH01D-30.flac
+.DS_Store

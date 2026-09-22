@@ -213,20 +213,61 @@ shape before committing to it. The header gives its ramp and total length.
 
 1. Give it a **name**. Saving with the name of an existing sequence replaces that one, so
    use a new name if you want to keep both.
-2. Set the **ramp** in seconds — how long every fade takes, both up and down. One value
-   for the whole piece.
-3. Add **steps**. A step is a moment in time and a set of arcs: *"at 4 minutes, arcs 1, 2
-   and 3 are on."* Tick the arcs that should be lit at that moment. The box fades between
-   consecutive steps for you.
-4. **Save**. The drawing at the bottom updates as you work, so you can see the shape
+2. Add **steps**. A step is a moment in time, a set of arcs and a ramp: *"at 4 minutes,
+   arcs 1, 2 and 3 are on, fading in over 2 seconds."* Times are in seconds, to a tenth
+   of a second (`240` or `240.5`); the `m:ss.s` beside each time shows the same moment in
+   minutes. Tick the arcs that should be lit at that moment.
+3. Set each step's **ramp** — how long the fade into that step takes. The fade *finishes*
+   at the step's time, so a step at 240 s with a 2 s ramp starts changing at 238 s. A ramp
+   of `0` switches instantly. New steps take the **new-step ramp** from the box above.
+4. Set the **loop** length — where the piece starts over. Leave it blank and it loops at
+   the last step plus that step's ramp.
+5. **Save**. The drawing at the bottom updates as you work, so you can see the shape
    before saving.
 
-The piece loops. After the last step it fades back to where it began and starts over.
+The piece loops. It starts in the state of its last step, so the join is seamless.
 
 To modify an existing piece rather than start blank, select it above and press **Load
 selected**.
 
-The box holds up to **8 sequences**, each up to **32 steps**.
+The line beside the Import / Export buttons shows the step count and the **loop length**.
+When a music track is loaded (§9) it shows the track's length too, so you can make the two
+match exactly.
+
+The box holds up to **8 sequences**, each up to **1000 steps**. Long lists scroll inside
+the card; more rows appear as you scroll down.
+
+### Writing a sequence in a spreadsheet
+
+A long piece — one that follows a 40-minute track, say — is far easier to write in a
+spreadsheet than one step at a time. Lay it out like this and save it as CSV:
+
+| time | arc1 | arc2 | arc3 | arc4 | arc5 | arc6 | ramp |
+|---|---|---|---|---|---|---|---|
+| 4 | 1 | 0 | 0 | 0 | 0 | 0 | 4 |
+| 64 | 1 | 1 | 0 | 0 | 0 | 0 | 0.5 |
+| 2:04.5 | x | x | x | | | | 2 |
+| 2400 | END | | | | | | |
+
+- **time** is seconds (`64`, `64.5`, `2,392.0`) or minutes and seconds (`1:04.5`), to a
+  tenth of a second.
+- For each arc, **1**, **x** or **on** means lit; **0**, **off** or an empty cell means dark.
+- **ramp** is the fade into that row's state, in seconds (0–600). A blank ramp cell takes
+  the editor's new-step ramp.
+- Keep the header row: it's how the importer knows which column is the ramp.
+- An optional last row with **END** sets where the loop closes — for a 40-minute track
+  put END at `2400`. Without it, the loop closes at the last step plus its ramp.
+- Instead of six arc columns you can use a single column of numbers 0–63 (header
+  `time,mask,ramp`), where arc 1 counts 1, arc 2 counts 2, arc 3 counts 4, and so on.
+- A file in the older layout, with no ramp column, still imports: every step then gets
+  the ramp between the last step and END, which is what that layout meant.
+
+Press **Import CSV…** and choose the file. It fills the editor and the drawing, but
+nothing is sent to the box until you press **Save**. If any row has a problem, nothing is
+loaded and the lines are listed by number, so you can fix them in the spreadsheet.
+
+**Export CSV** does the reverse: it downloads what's in the editor in the same layout,
+ready to open in a spreadsheet and import again.
 
 The built-in sequence, **"Original"**, is the piece the arcs wake one at a time over about
 five minutes, all six hold together, then they fall away in the same order — an eleven
@@ -234,7 +275,48 @@ minute loop.
 
 ---
 
-## 9. Putting the box on the gallery WiFi
+## 9. Playing the music with the lights
+
+The Control tab's **Audio** card plays a music track from the laptop in step with the
+sequence, through the laptop's own sound output (and on to the speakers). The track stays
+on the laptop; it is never sent to the box.
+
+1. On the laptop that feeds the speakers, open the control page and tick **Play audio on
+   this browser**. Phones used only as remotes leave this unticked and stay silent.
+2. Press **Choose track…** and pick the music file. The browser keeps a copy, so after a
+   reload or a restart you don't have to pick it again — as long as you open the page at
+   the same address.
+3. **Click anywhere on the page** when the yellow banner asks. Browsers won't play sound
+   until someone has clicked on the page, so this is needed once each time the page is
+   opened.
+
+From then on the music follows the lights, however the sequence is started — the Play
+button on this page, the front-panel button, or another phone. It starts at the same
+point in the piece as the arcs and fades out when the sequence stops or the box goes to
+Gallery. Once playing, the music is never adjusted — any jump in it would be heard.
+
+With **Keep the lights in step with the audio** ticked (the default), the page instead
+nudges the *sequence* a few milliseconds at a time to stay with the music; nobody can see
+the arcs move 20 ms early or late. Unticked, music and lights simply run side by side from
+a common start. The status line shows how closely they agree, e.g.
+`playing (+8 ms) · lights follow the audio`. Tick it on one browser only: two laptops
+following two copies of the track would pull the sequence between them.
+
+- **Match the lengths.** The sequence's loop length should equal the track's length — a
+  40:00 track needs a sequence that closes at 2400 s (see the END row in §8). The card
+  warns when they differ.
+- **If the sound is early or late** compared with the arcs, adjust **offset**: a positive
+  number plays the sound earlier. Bluetooth speakers need several hundred ms; a cable or
+  USB sound interface needs little or none.
+- **Use a compressed copy of the track** such as a 256 kbps AAC `.m4a`. It sounds the
+  same as the master and works in every browser. For no loss at all, a FLAC copy is
+  about 40% smaller than the WAV; Chrome and Edge also accept the full-size WAV.
+- **Keep the page open and in front**, and set the laptop never to sleep. Turn off
+  notification and alert sounds, or they'll come out of the show speakers too.
+
+---
+
+## 10. Putting the box on the gallery WiFi
 
 Open **WiFi setup** at the bottom of the Control tab.
 
@@ -259,7 +341,7 @@ settings from a phone.
 
 ---
 
-## 10. If something looks wrong
+## 11. If something looks wrong
 
 **An arc is dark or not turning.** Check its on/off button on the Control tab — it may
 have been switched off. Then check its sliders aren't at 0. Then check the status light
@@ -305,7 +387,7 @@ Sequences tab and choose it under *Active sequence*, then press Play or the sequ
 | Healthy light | slow green pulse (Gallery), blue blinking (Performance, waiting), slow blue pulse (sequence playing) |
 | Red 2 / 3 / 4 flashes | bulb / motor / power |
 | White blip every 2 s | web page has overridden the mode switch |
-| Settings saved automatically | yes — brightness, speed, mode, sequences |
+| Settings saved automatically | yes — brightness, speed, mode, sequences (the music track is kept by the laptop's browser) |
 | Survives a power cut | everything, except arcs switched off from the page |
 
 ---

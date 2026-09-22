@@ -4,11 +4,9 @@
 #include <string.h>
 
 namespace {
-uint8_t lerp8(uint8_t a, uint8_t b, uint32_t num, uint32_t den) {
-  if (den == 0) return a;
-  int32_t d = (int32_t)b - (int32_t)a;
-  return (uint8_t)((int32_t)a + d * (int32_t)num / (int32_t)den);
-}
+// Guards def_ against the web task's snapshot() while apply()/start() replace
+// it. The copy is ~8 KB — a few microseconds inside the critical section.
+portMUX_TYPE defMux = portMUX_INITIALIZER_UNLOCKED;
 
 // value * scale / 255, rounded.
 inline uint8_t scale8(uint8_t value, uint8_t scale) {
@@ -23,46 +21,22 @@ inline uint16_t scaleHz(uint16_t hz, uint8_t scale) {
 
 void SequenceEngine::begin() {
   // No choreography yet — main applies the active stored sequence right after
-  // (SequenceStore seeds NVS with the built-in piece on first boot).
+  // (SequenceStore seeds the built-in piece on first boot).
 }
 
-// Expand steps + shared ramp into the cue table. Each step contributes a
-// hold-until cue at (t - ramp) with the previous state and a target cue at t;
-// t=0 carries the last step's state so the loop is seamless, and the loop
-// closes at lastT + ramp (the CSV's END row).
-void SequenceEngine::expand(const SeqDef& def) {
-  uint16_t n = 0;
-  strlcpy(name_, def.name, sizeof(name_));         // what the cue table now is
-  auto put = [&](uint32_t t, uint8_t mask) {
-    if (n && buf_[n - 1].timeMs == t) --n;         // same-time dup: overwrite
-    Cue& c = buf_[n++];
-    c.timeMs = t;
-    for (uint8_t ch = 0; ch < NUM_CHANNELS; ++ch) {
-      uint8_t v = (mask >> ch) & 1 ? 255 : 0;      // bulb + motor move together
-      c.brightness[ch] = v;
-      c.speed[ch]      = v;
-    }
-  };
+void SequenceEngine::setDef(const SeqDef& def) {
+  portENTER_CRITICAL(&defMux);
+  memcpy(&def_, &def, sizeof(SeqDef));
+  if (def_.stepCount > SEQ_MAX_STEPS) def_.stepCount = 0;   // never trust a bad count
+  def_.name[sizeof(def_.name) - 1] = '\0';
+  loopLen_ = seqLoopLengthMs(def_);
+  portEXIT_CRITICAL(&defMux);
+}
 
-  if (def.stepCount == 0) { cues_ = nullptr; count_ = 0; return; }
-
-  uint8_t  lastMask = def.steps[def.stepCount - 1].mask;
-  uint8_t  prevMask = lastMask;
-  uint32_t prevT    = 0;
-  put(0, lastMask);                                // loop-seamless start state
-  for (uint8_t i = 0; i < def.stepCount; ++i) {
-    const SeqStep& s = def.steps[i];
-    uint32_t hold = (s.timeMs > def.rampMs) ? s.timeMs - def.rampMs : 0;
-    if (hold < prevT) hold = prevT;                // ramp squeezed by close steps
-    put(hold, prevMask);
-    put(s.timeMs, s.mask);
-    prevMask = s.mask;
-    prevT    = s.timeMs;
-  }
-  put(prevT + def.rampMs, lastMask);               // END: closes the loop
-
-  cues_  = buf_;
-  count_ = n;
+void SequenceEngine::snapshot(SeqDef& out) const {
+  portENTER_CRITICAL(&defMux);
+  memcpy(&out, &def_, sizeof(SeqDef));
+  portEXIT_CRITICAL(&defMux);
 }
 
 void SequenceEngine::apply(const SeqDef& def) {
@@ -70,15 +44,16 @@ void SequenceEngine::apply(const SeqDef& def) {
     queued_    = def;
     hasQueued_ = true;
   } else {
-    expand(def);
+    setDef(def);
   }
 }
 
 void SequenceEngine::start() {
   if (hasQueued_) {
-    expand(queued_);
+    setDef(queued_);
     hasQueued_ = false;
   }
+  ++runId_;
   running_ = true;
   startMs_ = millis();
 }
@@ -90,36 +65,32 @@ void SequenceEngine::stop() {
   running_ = false;
 }
 
+void SequenceEngine::nudge(int32_t ms) {
+  if (!running_) return;
+  uint32_t elapsed = millis() - startMs_;
+  if (ms < 0 && (uint32_t)(-ms) > elapsed) ms = -(int32_t)elapsed;
+  startMs_ -= (uint32_t)ms;                        // earlier start = later position
+}
+
 uint32_t SequenceEngine::positionMs() const {
-  if (!running_ || count_ == 0) return 0;
-  uint32_t loopLen = loopLengthMs();
-  return loopLen ? (millis() - startMs_) % loopLen : 0;
+  uint32_t loopLen = loopLen_;
+  if (!running_ || loopLen == 0) return 0;
+  return (millis() - startMs_) % loopLen;
 }
 
 bool SequenceEngine::fill(const uint8_t  setBrightness[NUM_CHANNELS],
                           const uint16_t setSpeedHz[NUM_CHANNELS],
                           uint8_t  outBrightness[NUM_CHANNELS],
                           uint16_t outSpeedHz[NUM_CHANNELS]) {
-  if (!running_ || !cues_ || count_ == 0) return false;
+  if (!running_) return false;
 
-  uint32_t t = positionMs();
-
-  // Find the segment [a, b] with cues_[a].timeMs <= t < cues_[b].timeMs.
-  uint16_t a = 0;
-  while (a + 1 < count_ && cues_[a + 1].timeMs <= t) ++a;
-  uint16_t b = (a + 1 < count_) ? a + 1 : a;
-
-  uint32_t segStart = cues_[a].timeMs;
-  uint32_t segEnd   = cues_[b].timeMs;
-  uint32_t num = t - segStart;
-  uint32_t den = (segEnd > segStart) ? (segEnd - segStart) : 0;
+  uint8_t scale[NUM_CHANNELS];
+  if (!seqFrameAt(def_, positionMs(), scale)) return false;
 
   for (uint8_t ch = 0; ch < NUM_CHANNELS; ++ch) {
-    // Interpolate the cue SCALE, then apply it to the commissioned set-point.
-    uint8_t bs = lerp8(cues_[a].brightness[ch], cues_[b].brightness[ch], num, den);
-    uint8_t ss = lerp8(cues_[a].speed[ch],      cues_[b].speed[ch],      num, den);
-    outBrightness[ch] = scale8(setBrightness[ch],  bs);
-    outSpeedHz[ch]    = scaleHz(setSpeedHz[ch],    ss);
+    // Bulb and motor share one scale: an arc's bulb + motor move together.
+    outBrightness[ch] = scale8(setBrightness[ch], scale[ch]);
+    outSpeedHz[ch]    = scaleHz(setSpeedHz[ch],   scale[ch]);
   }
   return true;
 }

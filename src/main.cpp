@@ -27,6 +27,10 @@
 // its flip, not its position — so a box mounted out of reach is fully driven
 // from the web. Boot restores the saved mode, stopped; nothing auto-plays.
 //
+// STAGING: entering Performance (switch, web, or booting into it) takes every
+// arc dark and stopped until the sequence is started, so the piece opens from
+// darkness. Stop after a run is unaffected (see SEQUENCE_STOP_HOLD).
+//
 
 #include <Arduino.h>
 #include <atomic>
@@ -75,6 +79,11 @@ static uint16_t effSpeedHz_[NUM_CHANNELS];
 // Per-arc web kill switches. Runtime only — never persisted, boots all-on. A
 // disabled arc is forced dark/stopped whatever the mode; set-points are untouched.
 static bool arcOn_[NUM_CHANNELS] = { true, true, true, true, true, true };
+
+// Staged: in Performance and not started since entering it, so every arc is
+// held dark/stopped until the sequence is triggered. Cleared on the first
+// running tick, whichever of the web or the button started it.
+static bool staged_ = false;
 
 // Mode / playback commands from the web page. The handlers run on the async web
 // task, so they only post here; loop() consumes them and alone touches the
@@ -156,6 +165,7 @@ static String buildStateJson() {
   if (inputs.lastPressMs()) j += (millis() - inputs.lastPressMs()) / 1000; else j += "-1";
   j += ',';
   j += "\"running\":"; j += sequence.running() ? "true" : "false"; j += ',';
+  j += "\"staged\":"; j += staged_ ? "true" : "false"; j += ',';
   j += "\"seq_t\":"; j += sequence.positionMs(); j += ',';
   // Loop length + a counter that bumps on every start: the page's audio follows
   // the box's clock with these (and tells a restart from ordinary progress).
@@ -216,6 +226,7 @@ static void writeSequenceJson(Print& out) {
 static void setMode(Mode m) {
   if (m == model.mode) return;
   model.mode = m;
+  staged_ = (m == Mode::Performance);         // go dark until the sequence starts
   configStore.markDirty();
 }
 
@@ -240,6 +251,7 @@ void setup() {
 
   // Restore persisted set-points + mode (or first-boot defaults).
   configStore.begin(model);
+  staged_ = (model.mode == Mode::Performance);  // booting into a show: stay dark
 
   // Bring up the hardware. Failures are non-fatal: a missing DAC shouldn't stop
   // the motors and vice-versa. We flag the worst fault on the LED.
@@ -317,7 +329,13 @@ void loop() {
   if (mode == Mode::Performance) {
     if (inputs.sequencePressed()) sequence.toggle();
     if (sequence.running()) {
+      staged_ = false;
       sequence.fill(model.brightness, model.speedHz, effBrightness_, effSpeedHz_);
+    } else if (staged_) {                     // waiting for the show: all dark
+      for (uint8_t i = 0; i < NUM_CHANNELS; ++i) {
+        effBrightness_[i] = 0;
+        effSpeedHz_[i]    = 0;
+      }
     } else if (!SEQUENCE_STOP_HOLD) {
       for (uint8_t i = 0; i < NUM_CHANNELS; ++i) {
         effBrightness_[i] = model.brightness[i];

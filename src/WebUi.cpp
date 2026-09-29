@@ -435,7 +435,7 @@ function wsave(){
 // seqName is the piece the timeline below IS; seqQueued is one selected while
 // a piece was playing, which by design only takes over at the next press.
 const MAXSTEPS=1000;              // mirror SEQ_MAX_STEPS in config.h
-let seq=null,seqKey=0,tlCache=null,seqT=0,seqAt=0,seqRun=false,seqLive=false,seqName='',seqQueued='';
+let seq=null,seqKey=0,tlCache=null,seqT=0,seqAt=0,seqRun=false,seqStaged=false,seqLive=false,seqName='',seqQueued='';
 let seqLen=0,seqRunId=0,curMode='',seqLoop=true;
 // Loop, or stop at the end of the pass in progress. Optimistic; the poll confirms.
 function paintLoop(){
@@ -541,7 +541,8 @@ function drawSeq(){
   }else{
     document.getElementById('loopnote').textContent='';
     document.getElementById('seqinfo').textContent=
-      `— ${nm} · stopped (press the sequence button)${q}`;
+      seqStaged?`— ${nm} · staged: arcs dark until Play or the sequence button${q}`
+               :`— ${nm} · stopped (press the sequence button)${q}`;
     document.getElementById('seqtime').textContent=`loop ${fmt(seq.len)}`;
   }
 }
@@ -1085,7 +1086,7 @@ async function poll(){
     document.getElementById('status').innerHTML=
       `<div>${hl}</div>`+
       `<div>Mode: <b>${d.mode}</b></div>`+
-      `<div>Sequence: ${nm}${d.running?'running':'stopped'}${q}</div>`+
+      `<div>Sequence: ${nm}${d.running?'running':d.staged?'staged (arcs dark)':'stopped'}${q}</div>`+
       `<div>WiFi: ${wifiLine(d)}</div>`+
       (d.host?`<div>Address: <b><a href="http://${d.host}/">http://${d.host}</a></b></div>`:'')+
       `<div>Uptime: <b>${d.uptime}s</b></div>`+
@@ -1098,7 +1099,7 @@ async function poll(){
     const sc=document.getElementById('seqcard');
     sc.style.display=(d.mode==='Performance')?'':'none';
     // seq_t was sampled mid-request: credit half the round trip.
-    seqRun=d.running;seqT=d.seq_t+(d.running?(t1-t0)/2:0);seqAt=t1;seqRtt=t1-t0;
+    seqRun=d.running;seqStaged=!!d.staged;seqT=d.seq_t+(d.running?(t1-t0)/2:0);seqAt=t1;seqRtt=t1-t0;
     seqLen=d.seq_len||0;seqRunId=d.run_id||0;curMode=d.mode;
     seqLoop=d.seq_loop!==false;paintLoop();
     // Refetch the timeline whenever the loaded piece changes — including when

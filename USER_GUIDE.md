@@ -39,8 +39,8 @@ Switch on the power. Then:
 Everything comes back exactly as you left it. Brightness, speed, mode, and your
 sequences are all remembered through a power cut — including a mode chosen on the web
 page, whatever the switch says. A sequence that was playing does **not** restart by
-itself: the box comes back in Performance, waiting, until someone presses Play or the
-sequence button.
+itself: the box comes back in Performance, waiting with every arc dark and still, until
+someone presses Play or the sequence button.
 
 **One exception:** if you switched any arcs off from the web page, they come back **on**
 after a power cycle. That is intentional — a box restarting overnight shouldn't come
@@ -62,6 +62,11 @@ in a set order. The status light turns blue and blinks the moment the mode chang
 which is your confirmation it has taken. Press the sequence button (or **Play** on the
 page) to start the piece; press again (or **Stop**) to stop. Play on the page also
 switches to Performance if the box was in Gallery.
+
+**Staging.** Going into Performance takes every arc dark and stops the motors, and they
+stay that way until the piece is started — so the performance opens from darkness. The
+page shows the sequence as **staged** while it waits. To stage again after a rehearsal,
+switch to Gallery and back (the arcs light briefly in between).
 
 When you stop a sequence, the arcs **hold wherever they are** rather than jumping back.
 Switch to Gallery to return them to their normal settings.
@@ -109,7 +114,7 @@ on site.
 |---|---|
 | Solid amber | Starting up. Normal for the first few seconds. |
 | Slow green pulse | Healthy, in Gallery mode. |
-| **Blue blinking** | Healthy, in Performance mode, waiting. Press the sequence button. |
+| **Blue blinking** | Healthy, in Performance mode, waiting (arcs dark until the piece starts). Press the sequence button. |
 | Slow blue pulse | Healthy, sequence playing. |
 | Amber pulsing | Looking for WiFi. Harmless — the arcs run regardless. |
 | Fast blue flicker | A software update is being installed. Do not cut the power. |

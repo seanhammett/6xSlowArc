@@ -5,7 +5,7 @@
 // SEQ_SLOTS numbered slots, one file each on the LittleFS "spiffs" partition
 // (/seq/<slot>.bin), plus the index of the ACTIVE sequence (the one the sequence
 // button plays), which stays in NVS. At SEQ_MAX_STEPS = 1000 a sequence is ~8 KB
-// and eight of them no longer fit the 20 KB NVS partition; the 1.5 MB spiffs
+// and even a few no longer fit the 20 KB NVS partition; the 1.5 MB spiffs
 // partition in the stock 8 MB table was unused, so no partition change is needed.
 //
 // First boot on this layout migrates any sequences the older firmware kept as
@@ -30,6 +30,7 @@ class SequenceStore {
   bool exists(uint8_t slot) const;
   bool load(uint8_t slot, SeqDef& out) const;
   bool save(uint8_t slot, const SeqDef& def);
+  bool erase(uint8_t slot);                  // delete the slot's file; false if absent
 
   // Just the stored name (reads the header only). False if the slot is empty.
   bool nameOf(uint8_t slot, char out[sizeof(SeqDef::name)]) const;

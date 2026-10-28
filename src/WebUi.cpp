@@ -122,7 +122,12 @@ const char kIndexHtml[] PROGMEM = R"HTML(
   input[type=number]{background:#15171c;border:1px solid #444;border-radius:6px;color:#e8e8e8;padding:.25rem .4rem;width:4.5rem}
   .step{display:flex;gap:.4rem;align-items:center;margin:.25rem 0;font-size:.85rem;flex-wrap:wrap}
   .step label{display:flex;align-items:center;gap:.15rem;color:#bbb}
-  #pvname,#selmsg,#edmsg,#edlen,#edmore{font-size:.85rem;color:#bbb}
+  #pvname,#selmsg,#edmsg,#edlen,#edmore,#slotsmsg{font-size:.85rem;color:#bbb}
+  #seqlist{max-height:16rem;overflow-y:auto;margin-top:.4rem}
+  .srow{display:flex;align-items:center;gap:.5rem;padding:.3rem 0;border-top:1px solid #333a46;font-size:.9rem}
+  .srow:first-child{border-top:0}
+  .srow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .srow small{color:#9ad}
   /* The step list scrolls inside the card; rows are added as it is scrolled. */
   #edwrap{max-height:24rem;overflow-y:auto}
   .step input[type=number]{width:5.5rem}
@@ -240,6 +245,10 @@ const char kIndexHtml[] PROGMEM = R"HTML(
 <div class="card">
  <b>Active sequence</b> — plays on the next Play or button push
  <div class="wrow"><select id="seqsel" onchange="selSeq()"></select><span id="selmsg"></span></div>
+</div>
+<div class="card">
+ <b>Stored sequences</b> <span id="slotsmsg"></span>
+ <div id="seqlist"></div>
 </div>
 <div class="card">
  <b>Preview</b> <span id="pvname"></span>
@@ -562,6 +571,13 @@ async function loadSeqList(){
     const d=await (await fetchT('/api/seqs')).json();
     document.getElementById('seqsel').innerHTML=d.seqs.map(s=>
       `<option value="${s.i}"${s.i==d.active?' selected':''}>${esc(s.name)}</option>`).join('');
+    // Stored list: Edit loads any piece without making it active; the active one
+    // can't be deleted (the box refuses too), so there is always one to play.
+    seqNames={};d.seqs.forEach(s=>seqNames[s.i]=s.name);
+    document.getElementById('slotsmsg').textContent=d.slots?`— ${d.seqs.length} of ${d.slots} slots used`:'';
+    document.getElementById('seqlist').innerHTML=d.seqs.map(s=>
+      `<div class="srow"><span class="nm">${esc(s.name)}</span><button onclick="edLoad(${s.i})">Edit</button>`+
+      (s.i==d.active?'<small>active</small>':`<button onclick="delSeq(${s.i})">Delete</button>`)+'</div>').join('');
     loadPreview();
   }catch(e){}
 }
@@ -573,6 +589,18 @@ async function loadPreview(){
       `— ${d.name} · ${st.length} steps · loop ${fmt1(d.len)}`;
     drawMask('pvcv',d.len,st);
   }catch(e){}
+}
+let seqNames={};
+async function delSeq(i){
+  const nm=seqNames[i]||'this sequence',m=document.getElementById('slotsmsg');
+  if(!await ask('Delete this sequence?',
+    `“${nm}” will be removed from the box. This can’t be undone. To keep a copy, press Edit, then Export CSV first.`,
+    'Delete'))return;
+  let r;
+  try{r=await fetchT('/api/seq/delete?i='+i,{method:'POST'})}
+  catch(e){m.textContent='— delete failed: no reply from the box';return}
+  if(!r.ok){m.textContent='— delete failed: '+await r.text();return}
+  loadSeqList();
 }
 async function selSeq(){
   await post('/api/seq/select?i='+document.getElementById('seqsel').value);
@@ -653,8 +681,8 @@ function edAdd(){
   else edRender(n+1);
   const w=document.getElementById('edwrap');w.scrollTop=w.scrollHeight;
 }
-async function edLoad(){
-  const i=document.getElementById('seqsel').value;
+async function edLoad(slot){
+  const i=slot??document.getElementById('seqsel').value;
   try{
     const d=await (await fetchT('/api/seq?i='+i)).json();
     ed={steps:stepsIn(d.steps)};
@@ -1263,6 +1291,7 @@ void WebUi::begin(ChannelModel* model, ConfigStore* store, SequenceStore* seqSto
   server.on("/api/seqs", HTTP_GET, [this](AsyncWebServerRequest* req) {
     String j = "{\"active\":";
     j += seqStore_->activeIndex();
+    j += ",\"slots\":"; j += SEQ_SLOTS;
     j += ",\"seqs\":[";
     char nm[sizeof(SeqDef::name)];
     bool first = true;
@@ -1303,6 +1332,26 @@ void WebUi::begin(ChannelModel* model, ConfigStore* store, SequenceStore* seqSto
     }
     seqStore_->setActive((uint8_t)i);
     if (seqActivated_) seqActivated_((uint8_t)i);
+    req->send(200, "application/json", "{\"ok\":true}");
+  });
+
+  // POST /api/seq/delete?i=N — remove a stored sequence. The active one is
+  // refused, so the button always has a piece to play; a deleted piece that is
+  // still playing carries on from the engine's RAM copy until it is stopped.
+  server.on("/api/seq/delete", HTTP_POST, [this](AsyncWebServerRequest* req) {
+    int i = req->hasParam("i") ? req->getParam("i")->value().toInt() : -1;
+    if (i < 0 || i >= SEQ_SLOTS || !seqStore_->exists((uint8_t)i)) {
+      req->send(404, "text/plain", "no such sequence");
+      return;
+    }
+    if ((uint8_t)i == seqStore_->activeIndex()) {
+      req->send(409, "text/plain", "that is the active sequence; select another one first");
+      return;
+    }
+    if (!seqStore_->erase((uint8_t)i)) {
+      req->send(500, "text/plain", "storage write failed");
+      return;
+    }
     req->send(200, "application/json", "{\"ok\":true}");
   });
 
@@ -1352,7 +1401,8 @@ void WebUi::begin(ChannelModel* model, ConfigStore* store, SequenceStore* seqSto
       int slot = seqStore_->saveByName(*d);
       free(d);
       if (slot < 0) {
-        req->send(507, "text/plain", "sequence slots full (or storage write failed)");
+        req->send(507, "text/plain",
+                  "every slot is in use; delete a sequence first (or storage write failed)");
         return;
       }
       // Saving over the active sequence re-arms the engine with the new version.

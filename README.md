@@ -26,12 +26,13 @@ With them blank (or if the join fails) the box raises a SoftAP **`SlowArc-Setup`
 |---|---|
 | `ChannelModel` | The 12 set-points (6 brightness + 6 speed) + mode. Persisted source of truth. |
 | `ConfigStore` | NVS persistence (debounced); restores on boot, falls back to defaults. |
-| `BulbController` | Owns 3× GP8403 DACs → 6 DIM14. Gamma curve, soft-start, stagger. |
-| `MotorController` | Owns 6× FastAccelStepper. Ramped speed, EN lines, safe shutdown. |
+| `BulbController` | Owns 3× GP8403 DACs → 6 DIM14. Linear 0–10 V (DIM14 does the curve), soft-start, stagger. |
+| `MotorController` | 6× TMC2209 STEP pulses from MCPWM. Ramped speed, EN lines, safe shutdown. |
 | `InputManager` | Debounces (Bounce2) the Mode switch and Sequence button. |
-| `SequenceEngine` | Performance-mode timeline interpreter (placeholder choreography). |
+| `SequenceEngine` | Performance-mode timeline interpreter; frame maths in `SeqFrame.h`. |
+| `SequenceStore` | Up to 32 artist-edited sequences (≤ 1000 steps) as LittleFS files. |
 | `StatusLed` | WS2812 state indication. |
-| `NetworkManager` | Non-blocking WiFi (STA + AP fallback, bounded reconnect). |
+| `NetworkSupervisor` | Non-blocking WiFi (STA + AP fallback, bounded reconnect). |
 | `OtaService` | ArduinoOTA; safe-states the rig before flashing. |
 | `WebUi` | Async web status/control page + JSON API. |
 | `main.cpp` | Wiring, control loop, watchdog, brownout reporting, state JSON. |
@@ -50,8 +51,12 @@ Regenerate after any UI change with `python3 tools/make_mock_ui.py`.
 - **Gallery** (default): each channel holds its commissioned brightness/speed.
   Set-and-forget. The Mode switch selects it (switch open).
 - **Performance**: `SequenceEngine` drives values over time; the Sequence button
-  starts/stops playback. Switch closed selects it. **Stop holds the current
-  values** (`SEQUENCE_STOP_HOLD` in `config.h`).
+  starts/stops playback. Switch closed selects it. Entering Performance **stages**
+  the arcs: all dark and stopped until the sequence is started. **Stop holds the
+  current values** (`SEQUENCE_STOP_HOLD` in `config.h`).
+
+The web page can set the mode too; the switch acts on its flip, and the last
+change wins.
 
 ## Status-LED codes (WS2812)
 
@@ -59,10 +64,12 @@ Regenerate after any UI change with `python3 tools/make_mock_ui.py`.
 |---|---|
 | Boot / soft-start | Solid amber |
 | Gallery, healthy | Slow green pulse |
+| Performance, waiting (staged or stopped) | Fast blue blink |
 | Performance, running | Slow blue pulse |
 | WiFi connecting | Amber pulse |
 | OTA in progress | Fast blue pulse |
 | Fault | Red blink; count = subsystem (**2** bulb/DAC, **3** motor, **4** supply/brownout) |
+| Web has overridden the switch | Brief white blip every 2 s over any of the above |
 
 Keep this table on the box — the LED is the only on-board diagnostic.
 
@@ -71,9 +78,9 @@ Keep this table on the box — the LED is the only on-board diagnostic.
 - **Soft-start**: each channel ramps 0→target over `BULB_RAMP_MS` (~350 ms).
 - **Stagger**: channel turn-on offset by `BULB_STAGGER_MS` so twelve cold
   filaments don't inrush together on the 1000W rail.
-- **Gamma**: configured brightness is gamma-corrected to perceptually-linear
-  output, quantised to 256 levels.
-- **Motors ramped**: FastAccelStepper accel/decel; never instantaneous jumps.
+- **No firmware gamma**: brightness maps linearly to 0–10 V; the DIM14 applies
+  its own perceptual curve.
+- **Motors ramped**: accel/decel at `MOTOR_ACCEL_HZ_S`; never instantaneous jumps.
 - **Safe shutdown**: any fault / watchdog reset leaves EN disabled. EN defaults
   disabled at boot (active-LOW + external pull-up).
 - **State recovery**: 12 set-points + mode restored from NVS and soft-started.
@@ -88,8 +95,8 @@ binary blob; web-UI changes mark it dirty and are coalesced
 
 ## Open items (spec §9) — current decisions
 
-1. **Sequence content**: placeholder loop in `SequenceEngine.cpp`; replace
-   `kPlaceholderCues` (or call `load()`) with the artist's cues.
+1. **Sequence content**: artist-edited on the web UI's Sequences tab (CSV import /
+   export, see `sequences/`); the built-in "Original" is seeded on first boot.
 2. **Stop behaviour**: hold current values (configurable).
 3. **GPIO**: assigned in `pins.h` for the DevKitC-1 — re-verify against the real board.
 4. **Bulb part**: affects inrush documentation only; soft-start covers it.

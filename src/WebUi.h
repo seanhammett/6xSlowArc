@@ -13,6 +13,7 @@
 //   GET  /api/seqs         list stored sequences + the active slot
 //   GET  /api/seq?i=N      one stored sequence definition
 //   POST /api/seq/select   make slot N active (plays on next Play / button push)
+//   POST /api/seq/delete   delete slot N (refused for the active sequence)
 //   POST /api/seq/save     save a sequence (name + loop length in the query,
 //                          steps in the body — 1000 steps no longer fit a URL)
 // Sequences travel as {"name","len":loop_ms,"steps":[[t_ms,mask,ramp_ms],...]},

@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slow Arc Firmware Update</title>
+<meta name="description" content="Step-by-step, on-site instructions for installing the 22 September 2026 Slow Arc controller software with a USB cable and a web browser.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+  :root {
+    --ground: #eef1f4;
+    --surface: #ffffff;
+    --ink: #17202b;
+    --muted: #566271;
+    --rule: #d3dae2;
+    --act: #1d5bd0;
+    --act-soft: #e3ecfc;
+    --stop: #b42318;
+    --stop-soft: #fdecea;
+    --ok: #1d7a4b;
+    /* Replicas of the Espressif page keep that page's own light look in both themes. */
+    --screen: #ffffff;
+    --screen-ink: #333333;
+    --screen-rule: #cccccc;
+    --screen-edge: #c3cbd4;
+    --bs-info: #5bc0de;
+    --bs-info-edge: #46b8da;
+    --bs-danger: #d9534f;
+    --bs-danger-edge: #d43f3a;
+    --term: #1e1e1e;
+    --term-ink: #e6e6e6;
+    --led-amber: #ff9a1f;
+    --led-green: #2fd36b;
+    --led-blue: #3d7bff;
+
+    --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+    --body: "Atkinson Hyperlegible", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+    --step-0: 1.0625rem;
+    --step-1: 1.25rem;
+    --step-2: 1.6rem;
+    --step-3: clamp(2rem, 1.4rem + 2.6vw, 2.75rem);
+    --small: 0.9rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0f141a;
+      --surface: #171e27;
+      --ink: #e6eaef;
+      --muted: #9ba6b4;
+      --rule: #2a3441;
+      --act: #86abff;
+      --act-soft: #1b2a46;
+      --stop: #ff8272;
+      --stop-soft: #3a1d1a;
+      --ok: #62cf93;
+      --screen-edge: #3a4552;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0f141a;
+    --surface: #171e27;
+    --ink: #e6eaef;
+    --muted: #9ba6b4;
+    --rule: #2a3441;
+    --act: #86abff;
+    --act-soft: #1b2a46;
+    --stop: #ff8272;
+    --stop-soft: #3a1d1a;
+    --ok: #62cf93;
+    --screen-edge: #3a4552;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: var(--step-0);
+    line-height: 1.6;
+    padding-inline: 16px;
+    padding-block: 2.5rem 4rem;
+  }
+  .page { max-width: 46rem; margin-inline: auto; display: grid; gap: 2.75rem; }
+
+  h1, h2, h3 { font-family: var(--display); line-height: 1.15; text-wrap: balance; margin: 0; }
+  h1 { font-size: var(--step-3); font-weight: 700; letter-spacing: -0.015em; }
+  h2 { font-size: var(--step-2); font-weight: 700; }
+  h3 { font-size: var(--step-1); font-weight: 600; }
+  p { margin: 0; max-width: 65ch; }
+  a { color: var(--act); text-underline-offset: 0.18em; }
+  a:focus-visible { outline: 3px solid var(--act); outline-offset: 3px; border-radius: 2px; }
+  strong { font-weight: 700; }
+  code, .mono { font-family: var(--mono); font-size: 0.92em; }
+  .type {
+    font-family: var(--mono); font-weight: 600; font-size: 0.95em;
+    background: var(--act-soft); color: var(--act);
+    padding: 0.05em 0.35em; border-radius: 4px; white-space: nowrap;
+  }
+  .ui {           /* a label as it appears on screen */
+    font-weight: 700;
+    border-bottom: 2px solid var(--rule);
+  }
+
+  /* ---- header ---------------------------------------------------------- */
+  header { display: grid; gap: 1rem; }
+  .eyebrow {
+    font-size: var(--small); text-transform: uppercase; letter-spacing: 0.09em;
+    color: var(--muted); font-weight: 700;
+  }
+  .lede { font-size: var(--step-1); line-height: 1.5; }
+  .facts {
+    display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem;
+    padding-top: 1rem; border-top: 1px solid var(--rule);
+    color: var(--muted); font-size: var(--small);
+  }
+  .facts b { color: var(--ink); font-weight: 700; }
+
+  /* ---- sections ------------------------------------------------------- */
+  section { display: grid; gap: 1.1rem; }
+  .checklist { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.75rem; }
+  .checklist li { display: grid; grid-template-columns: 1.6rem 1fr; gap: 0.6rem; align-items: start; }
+  .box {
+    width: 1.15rem; height: 1.15rem; margin-top: 0.28rem;
+    border: 2px solid var(--muted); border-radius: 3px;
+  }
+
+  .rule {
+    background: var(--stop-soft);
+    border: 2px solid var(--stop);
+    border-radius: 10px;
+    padding: 1.25rem 1.35rem;
+    display: grid; gap: 0.9rem;
+  }
+  .rule h2 { color: var(--stop); font-size: var(--step-1); }
+  .rule-row { display: flex; flex-wrap: wrap; gap: 1rem 1.25rem; align-items: center; }
+  .rule-row p { flex: 1 1 18rem; }
+
+  /* ---- steps ---------------------------------------------------------- */
+  .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; counter-reset: step; }
+  .step {
+    counter-increment: step;
+    display: grid; grid-template-columns: 3rem 1fr; gap: 0 1rem;
+    padding-block: 1.6rem;
+    border-top: 1px solid var(--rule);
+  }
+  .step:last-child { border-bottom: 1px solid var(--rule); }
+  .step::before {
+    content: counter(step);
+    font-family: var(--display); font-weight: 700; font-size: 1.5rem; line-height: 1;
+    width: 2.5rem; height: 2.5rem; border-radius: 50%;
+    display: grid; place-items: center;
+    background: var(--ink); color: var(--ground);
+    font-variant-numeric: tabular-nums;
+  }
+  .step-body { display: grid; gap: 0.8rem; min-width: 0; }
+  .note { color: var(--muted); font-size: var(--small); }
+
+  /* ---- replicas of the Espressif page --------------------------------- */
+  .screen {
+    background: var(--screen); color: var(--screen-ink);
+    border: 1px solid var(--screen-edge); border-radius: 8px;
+    padding: 0.9rem 1rem;
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.4;
+    display: flex; flex-wrap: wrap; gap: 0.6rem 0.9rem; align-items: center;
+    max-width: 100%; overflow-x: auto;
+  }
+  .screen .cap {
+    flex-basis: 100%; font-family: var(--body); font-size: 12px; letter-spacing: 0.06em;
+    text-transform: uppercase; color: #777; font-weight: 700;
+  }
+  .bs {
+    display: inline-block; padding: 5px 10px; font-size: 12px; line-height: 1.5;
+    border-radius: 3px; color: #fff; border: 1px solid transparent; white-space: nowrap;
+  }
+  .bs.info { background: var(--bs-info); border-color: var(--bs-info-edge); }
+  .bs.danger { background: var(--bs-danger); border-color: var(--bs-danger-edge); }
+  .bs.crossed { position: relative; }
+  .bs.crossed::after {
+    content: ""; position: absolute; left: -6px; right: -6px; top: 50%;
+    border-top: 3px solid var(--stop); transform: rotate(-12deg);
+  }
+  .here { outline: 3px solid var(--act); outline-offset: 3px; }
+  .chooser {
+    border: 1px solid var(--screen-rule); border-radius: 6px; overflow: hidden; min-width: 0;
+    flex: 1 1 18rem;
+  }
+  .chooser div { padding: 6px 10px; border-top: 1px solid #eee; }
+  .chooser div:first-child { border-top: 0; color: #777; font-size: 12px; }
+  .chooser .pick { background: #e8f0fe; font-weight: 600; }
+  table.flash { border-collapse: collapse; width: 100%; min-width: 22rem; }
+  table.flash th { text-align: left; font-weight: 700; padding: 6px 8px; background: #f5f5f5; border-bottom: 1px solid var(--screen-rule); }
+  table.flash td { padding: 8px; vertical-align: middle; }
+  .field {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    font-family: var(--mono); font-size: 14px;
+    border: 1px solid #999; padding: 3px 6px; border-radius: 2px; background: #fff;
+  }
+  .old { text-decoration: line-through; color: #999; }
+  .new { font-weight: 600; color: #111; }
+  .filebtn { border: 1px solid #999; background: #efefef; padding: 2px 8px; border-radius: 3px; font-size: 13px; }
+  .connected { font-weight: 700; }
+  .term {
+    background: var(--term); color: var(--term-ink); font-family: var(--mono); font-size: 13px;
+    border-radius: 6px; padding: 0.7rem 0.9rem; line-height: 1.55; white-space: pre; overflow-x: auto;
+    flex-basis: 100%;
+  }
+  .term .dim { color: #9a9a9a; }
+
+  /* ---- verification --------------------------------------------------- */
+  .checks { display: grid; gap: 1rem; }
+  .check { display: grid; grid-template-columns: 3.25rem 1fr; gap: 1rem; align-items: start; }
+  .lamps { display: flex; gap: 0.35rem; padding-top: 0.25rem; }
+  .led {
+    width: 1rem; height: 1rem; border-radius: 50%;
+    box-shadow: 0 0 0 2px var(--surface), 0 0 10px 2px currentColor;
+    background: currentColor;
+  }
+  .led.amber { color: var(--led-amber); }
+  .led.green { color: var(--led-green); animation: breathe 2.6s ease-in-out infinite; }
+  .led.blue { color: var(--led-blue); animation: blink 0.5s steps(1, end) infinite; }
+  @keyframes breathe { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+  @keyframes blink { 0% { opacity: 1; } 30% { opacity: 0.08; } }
+  .glyph {
+    width: 2.4rem; height: 2.4rem; border-radius: 8px; background: var(--surface);
+    border: 1px solid var(--rule); display: grid; place-items: center;
+    font-family: var(--display); font-weight: 700; color: var(--muted);
+  }
+
+  /* ---- troubleshooting ------------------------------------------------ */
+  .trouble { margin: 0; display: grid; gap: 0; }
+  .trouble > div {
+    display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr); gap: 0.4rem 1.5rem;
+    padding-block: 1rem; border-top: 1px solid var(--rule);
+  }
+  .trouble dt { font-weight: 700; }
+  .trouble dd { margin: 0; }
+
+  .aside {
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 10px;
+    padding: 1.25rem 1.35rem; display: grid; gap: 0.75rem;
+  }
+
+  .files { overflow-x: auto; }
+  .files table { border-collapse: collapse; width: 100%; font-size: var(--small); min-width: 30rem; }
+  .files th, .files td { text-align: left; padding: 0.55rem 0.75rem 0.55rem 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  .files th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+  .files td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  footer { color: var(--muted); font-size: var(--small); display: grid; gap: 0.75rem; }
+
+  @media (max-width: 560px) {
+    .step { grid-template-columns: 1fr; gap: 0.8rem; }
+    .trouble > div { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .led.green, .led.blue { animation: none; opacity: 1; }
+  }
+  @media print {
+    :root { --ground: #fff; --surface: #fff; }
+    body { padding-block: 0; font-size: 11pt; }
+    .page { gap: 1.5rem; }
+    .step, .check, .trouble > div, .rule, .aside { break-inside: avoid; }
+    .led { animation: none !important; box-shadow: none; }
+  }
+</style>
+
+<main class="page">
+
+  <header>
+    <div class="eyebrow">Slow Arc controller · on-site instructions</div>
+    <h1>Installing the 22 September 2026 update</h1>
+    <p class="lede">This puts new software on the control box using a web page and a USB cable. The box keeps everything it remembers: every arc’s brightness and speed, the sequences and the WiFi login.</p>
+    <p class="note">This replaces any earlier update file you were sent. Use only the files in this folder.</p>
+    <div class="facts">
+      <span><b>About 10 minutes</b></span>
+      <span><b>Google Chrome</b> or <b>Microsoft Edge</b></span>
+      <span>The arcs pause for <b>a minute or two</b></span>
+    </div>
+  </header>
+
+  <section aria-labelledby="before">
+    <h2 id="before">Before you start</h2>
+    <ul class="checklist">
+      <li><span class="box" aria-hidden="true"></span><span>A laptop with <strong>Google Chrome</strong> or <strong>Microsoft Edge</strong>. Safari and Firefox can’t do this.</span></li>
+      <li><span class="box" aria-hidden="true"></span><span>A <strong>USB cable that carries data</strong>, to connect the laptop to the circuit board inside the control box. Many phone-charging cables only carry power and won’t work.</span></li>
+      <li><span class="box" aria-hidden="true"></span><span>The file <code>slowarc-2026-09-22.bin</code> saved on the laptop, for example in Downloads. Keep <code>slowarc-july2026-rollback.bin</code> next to it, just in case.</span></li>
+      <li><span class="box" aria-hidden="true"></span><span>A time when the arcs aren’t needed. They go dark and stop briefly, then come back by themselves.</span></li>
+    </ul>
+  </section>
+
+  <section class="rule" aria-labelledby="rule">
+    <h2 id="rule">The one rule: never press Erase Flash</h2>
+    <div class="rule-row">
+      <span class="bs danger crossed" aria-hidden="true">Erase Flash</span>
+      <p>It wipes everything the box remembers, and the box would have to be set up again from scratch. Nothing in these instructions needs it. The only address you ever type is <span class="type">0xE000</span>.</p>
+    </div>
+  </section>
+
+  <section aria-labelledby="steps">
+    <h2 id="steps">Steps</h2>
+    <ol class="steps">
+
+      <li class="step">
+        <div class="step-body">
+          <h3>Plug in the cable</h3>
+          <p>Connect the USB cable to the socket marked <strong>UART</strong> on the small circuit board inside the control box, and to your laptop. Leave the box switched on.</p>
+          <p class="note">If the board has two sockets, UART is the one to use. There’s a fix in “If something goes wrong” if it doesn’t connect.</p>
+        </div>
+      </li>
+
+      <li class="step">
+        <div class="step-body">
+          <h3>Open the update page</h3>
+          <p>In Chrome or Edge, go to <a href="https://espressif.github.io/esptool-js/"><strong>espressif.github.io/esptool-js</strong></a>. It’s the official tool from Espressif, the company that makes the chip in the box. Nothing gets installed on the laptop.</p>
+        </div>
+      </li>
+
+      <li class="step">
+        <div class="step-body">
+          <h3>Connect to the box</h3>
+          <p>Under <span class="ui">Program</span>, leave <span class="ui">Baudrate</span> as it is and click <span class="ui">Connect</span>. A small window lists devices: pick the one with <strong>CP210x</strong> or <strong>USB to UART</strong> in its name, then click <span class="ui">Connect</span> in that window.</p>
+          <div class="screen" aria-label="What the page looks like">
+            <span class="cap">On the update page</span>
+            <span class="bs info here">Connect</span>
+            <div class="chooser">
+              <div>espressif.github.io wants to connect to a serial port</div>
+              <div class="pick">CP2102N USB to UART Bridge Controller</div>
+            </div>
+          </div>
+          <p>When it has worked, the page says <strong>Connected to device: ESP32-S3</strong> followed by some details.</p>
+        </div>
+      </li>
+
+      <li class="step">
+        <div class="step-body">
+          <h3>Type the address</h3>
+          <p>There’s a table with <span class="ui">Flash Address</span> and <span class="ui">File</span>, with one row already in it. Click into the Flash Address box, delete <code>0x1000</code>, and type <span class="type">0xE000</span>: zero, the letter x, the letter E, then three zeros.</p>
+          <div class="screen" aria-label="The Flash Address box with 0xE000 typed in">
+            <span class="cap">The first row of the table</span>
+            <table class="flash">
+              <thead><tr><th>Flash Address</th><th>File</th></tr></thead>
+              <tbody><tr>
+                <td><span class="field here"><span class="old">0x1000</span><span class="new">0xE000</span></span></td>
+                <td><span class="filebtn">Choose File</span> <span style="color:#777">No file chosen</span></td>
+              </tr></tbody>
+            </table>
+          </div>
+          <p class="note">This address is what keeps the box’s settings safe, so check it twice.</p>
+        </div>
+      </li>
+
+      <li class="step">
+        <div class="step-body">
+          <h3>Choose the file</h3>
+          <p>In the same row, click <span class="ui">Choose File</span> (on some laptops it says <span class="ui">Browse…</span>) and pick <code>slowarc-2026-09-22.bin</code>.</p>
+          <p class="note">Don’t click Add File. Leave Flash Mode, Flash Frequency and Flash Size as they are.</p>
+        </div>
+      </li>
+
+      <li class="step">
+        <div class="step-body">
+          <h3>Click Program and wait</h3>
+          <p>Click <span class="ui">Program</span>. A progress bar fills, which takes about a minute. Don’t unplug the cable or close the page while it’s moving.</p>
+          <div class="screen" aria-label="The messages shown when the update has finished">
+            <span class="cap">It’s finished when the text on the page ends like this</span>
+            <div class="term"><span class="dim">Wrote 1211456 bytes (… compressed) at 0xe000 in … seconds.</span>
+Hash of data verified.
+Leaving...</div>
+          </div>
+          <p>The control box then restarts by itself.</p>
+        </div>
+      </li>
+
+      <li class="step">
+        <div class="step-body">
+          <h3>Disconnect</h3>
+          <p>Click <span class="ui">Disconnect</span>, unplug the USB cable, and close the box as you found it.</p>
+        </div>
+      </li>
+
+    </ol>
+  </section>
+
+  <section aria-labelledby="worked">
+    <h2 id="worked">Check it worked</h2>
+    <div class="checks">
+      <div class="check">
+        <div class="lamps" aria-hidden="true"><span class="led amber"></span><span class="led green"></span></div>
+        <p><strong>The status light</strong> is solid amber for a few seconds, then settles into a slow green pulse (Gallery) or blue blinking (Performance), the same as after switching the box on.</p>
+      </div>
+      <div class="check">
+        <div class="glyph" aria-hidden="true">6</div>
+        <p><strong>The arcs</strong>: the bulbs fade back up one after another and the motors start turning, at their usual settings.</p>
+      </div>
+      <div class="check">
+        <div class="glyph" aria-hidden="true">▶</div>
+        <p><strong>The web page</strong>: open the control page as usual. The Control tab has a card called <strong>Override physical controls</strong> at the top, with Gallery, Performance and ▶ Play buttons. If it looks unchanged, refresh the page.</p>
+      </div>
+      <div class="check">
+        <div class="glyph" aria-hidden="true">≡</div>
+        <p><strong>The sequences</strong>: on the Sequences tab, the list still shows the same sequences as before, with the same one selected.</p>
+      </div>
+    </div>
+    <p>Then send Sean a photo of the web page.</p>
+  </section>
+
+  <section aria-labelledby="trouble">
+    <h2 id="trouble">If something goes wrong</h2>
+    <dl class="trouble">
+      <div>
+        <dt>The device list is empty, or the box isn’t in it</dt>
+        <dd>Try a different USB cable; that’s the most common cause. On Windows, wait a minute after plugging in and try again. Still nothing? Plug into the socket marked <strong>USB</strong> instead. The device is then called <strong>USB JTAG/serial debug unit</strong>.</dd>
+      </div>
+      <div>
+        <dt>Stuck on “Connecting…” or it says “Failed to connect with the device”</dt>
+        <dd>Refresh the page. Hold down the button marked <strong>BOOT</strong> on the circuit board, click Connect, and let go once it says Connected.</dd>
+      </div>
+      <div>
+        <dt>“Offset field in row 1 is not a valid address!”</dt>
+        <dd>The address was mistyped. It must be exactly <span class="type">0xE000</span>.</dd>
+      </div>
+      <div>
+        <dt>It stopped partway with an error, or the cable came out</dt>
+        <dd>Nothing is lost, but the box won’t run until an update completes. Click Disconnect, refresh the page, choose <strong>115200</strong> as the Baudrate (slower, more reliable), and start again from step 3.</dd>
+      </div>
+      <div>
+        <dt>The box is back, but something looks wrong</dt>
+        <dd>For example, red flashes that don’t stop, or arcs that don’t move. Put the previous version back (below), then call Sean. If the light flashes red, count the flashes.</dd>
+      </div>
+    </dl>
+  </section>
+
+  <section class="aside" aria-labelledby="rollback">
+    <h2 id="rollback">Going back to the previous version</h2>
+    <p>Follow the same seven steps, but in step 5 choose <code>slowarc-july2026-rollback.bin</code>. The address is the same, <span class="type">0xE000</span>, and the box keeps its settings this way too.</p>
+    <p class="note">The previous version has no Override physical controls card on the web page. Use the switch and the sequence button on the box instead. Sequences made or changed after this update won’t show in the previous version, but they aren’t deleted: installing the update again brings them back.</p>
+  </section>
+
+  <footer>
+    <div class="files">
+      <table>
+        <thead><tr><th>File</th><th>What it is</th><th>Size</th></tr></thead>
+        <tbody>
+          <tr><td><code>slowarc-2026-09-22.bin</code></td><td>The 22 September 2026 update: web page playback controls, longer sequences, audio sync and show-reliability fixes</td><td class="num">1.2 MB</td></tr>
+          <tr><td><code>slowarc-july2026-rollback.bin</code></td><td>The July 2026 version, only if you need to go back</td><td class="num">1.1 MB</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Prepared 22 September 2026. Update built from main at c844cfb; rollback built from tag v2026.07. Both files are written from 0xE000 up to at most 0x136000, which leaves the settings area (below 0xE000) and the sequence storage (from 0x670000) untouched.</p>
+  </footer>
+
+</main>
+
+
+</html>

@@ -8,6 +8,23 @@ you set, and keeps running on its own whether or not there is WiFi.
 
 ---
 
+## 0. Overview
+
+This control box powers and controls six Slow Arcs at once. It has two modes: Gallery
+and Performance. In Gallery mode, each artwork runs continuously at its own settings. In
+Performance mode, all the artworks stay dark until a timed sequence, in which they turn on
+and off, is started by pressing Play or the sequence button.
+
+The box has both physical controls and a web page that it hosts itself. Every physical
+control on the box is repeated on the web page. The page shows detailed information about
+the state of the artworks and the control box itself, and also lets you create, select,
+edit or delete the stored performance sequences.
+
+Optionally, a music track can be loaded into the web page on a laptop and played in sync
+with the performance sequence (§9).
+
+---
+
 ## 1. The box
 
 > **[ photo placeholder ]** — `docs/img/front-panel.jpg`
@@ -36,8 +53,12 @@ Switch on the power. Then:
 3. The motors start turning.
 4. The light settles into a **slow green pulse**. The box is running normally.
 
+That is a box in **Gallery** mode. A box that was left in **Performance** keeps every arc
+dark and still instead, and the light settles into **blue blinking**: it is waiting for
+the piece to be started (§3).
+
 Everything comes back exactly as you left it. Brightness, speed, mode, and your
-sequences are all remembered through a power cut — including a mode chosen on the web
+sequences are all remembered through a power cut, including a mode chosen on the web
 page, whatever the switch says. A sequence that was playing does **not** restart by
 itself: the box comes back in Performance, waiting with every arc dark and still, until
 someone presses Play or the sequence button.
@@ -66,7 +87,8 @@ switches to Performance if the box was in Gallery.
 **Staging.** Going into Performance takes every arc dark and stops the motors, and they
 stay that way until the piece is started — so the performance opens from darkness. The
 page shows the sequence as **staged** while it waits. To stage again after a rehearsal,
-switch to Gallery and back (the arcs light briefly in between).
+switch to Gallery and back (the arcs light briefly in between). Pressing Play while the
+box is in Gallery skips staging and starts the piece at once.
 
 When you stop a sequence, the arcs **hold wherever they are** rather than jumping back.
 Switch to Gallery to return them to their normal settings.
@@ -143,7 +165,8 @@ is worth mentioning but not urgent.
 ## 6. The Control tab
 
 The top strip is the box's status at a glance: healthy or faulty, which mode, which
-sequence is selected and whether it is running, which WiFi network it is on, and how long
+sequence is selected and whether it is running, stopped or **staged** (arcs dark, waiting
+for Play), which WiFi network it is on, and how long
 it has been on. If the box is still serving its own **SlowArc-Setup** network, an amber
 line asks you to connect it to a local WiFi network, with a link to **WiFi setup**.
 
@@ -163,8 +186,9 @@ out and stop responding, because what they are showing is the last reading recei
 rather than anything current. The strip counts up how long it has been out of contact,
 and comes back by itself within a few seconds of the box returning.
 
-Below it, one column per arc. **Note that these values should not be adjusted except on 
-explicit instructions from Conrad or his team.**
+Below the **Performance** box (§7, §9) is the **Set-points** card, with one column per arc.
+**Note that these values should not be adjusted except on explicit instructions from
+Conrad or his team.**
 
 - The **blue slider (M)** is motor speed, 0–100.
 - The **yellow slider (B)** is bulb brightness, 0–100.
@@ -209,6 +233,10 @@ If you pick a different sequence while one is playing, the header says so —
 actually playing until you stop and start it again. Nothing has been lost; the box
 is just refusing to cut a piece off part-way through.
 
+Before the piece has been started, the header reads *staged: arcs dark until Play or the
+sequence button*, and the arcs are dark and still (§3). After a Stop it reads *stopped*,
+and the arcs hold wherever the piece left them.
+
 Note that the sequence controls **when** each arc rises and falls, not how bright or fast
 it goes. That still comes from the sliders. So you can re-tune the look of the piece at
 any time without touching the choreography.
@@ -219,15 +247,25 @@ any time without touching the choreography.
 
 ![The Sequences tab](docs/img/ui-sequences.png)
 
-Three sections.
+Four sections.
 
 **Active sequence** — pick which piece plays. If a sequence is playing when you change
 this, the new one starts at the **next** press of Play or the sequence button, so you never cut a
 piece off mid-way. The line under the menu tells you which of the two happened, and the
 Control tab names the selected piece in its status strip.
 
+**Stored sequences** — every piece saved on the box, and how many of the 32 slots are in
+use. Each has two buttons:
+
+- **Edit** loads the piece into *Create / edit* below, without making it the active one.
+- **Delete** removes it from the box, after asking you to confirm. This can't be undone,
+  so to keep a copy press **Edit** and then **Export CSV** first. The active sequence
+  shows **active** instead of a Delete button: to delete it, choose a different active
+  sequence first. Deleting a piece that is playing doesn't stop it. It plays on until it
+  is stopped, and is simply gone from the list.
+
 **Preview** — the same timeline view, for the sequence you selected, so you can see its
-shape before committing to it. The header gives its ramp and total length.
+shape before committing to it. The header gives its number of steps and its loop length.
 
 **Create / edit** — build a piece of your own:
 
@@ -247,14 +285,21 @@ shape before committing to it. The header gives its ramp and total length.
 
 The piece loops. It starts in the state of its last step, so the join is seamless.
 
-To modify an existing piece rather than start blank, select it above and press **Load
-selected**.
+**Opening from darkness.** Because the box waits in the dark (§3), a piece that ends with
+every arc off, as "Original" does, opens smoothly from black. A piece that ends with arcs
+lit and has no step at 0 s jumps straight to that last state when Play is pressed. To
+avoid that, add a first step at **0 s with no arcs ticked**. In a looping piece the arcs
+then also return to dark at the start of every loop.
+
+To modify an existing piece rather than start blank, press **Edit** beside it under
+*Stored sequences*. (**Load selected** does the same for the active sequence.)
 
 The line beside the Import / Export buttons shows the step count and the **loop length**.
 When a music track is loaded (§9) it shows the track's length too, so you can make the two
 match exactly.
 
-The box holds up to **8 sequences**, each up to **1000 steps**. Long lists scroll inside
+The box holds up to **32 sequences**, each up to **1000 steps**. When every slot is in
+use, saving a new name fails with a message saying so: delete one you no longer need. Long lists scroll inside
 the card; more rows appear as you scroll down.
 
 ### Writing a sequence in a spreadsheet
@@ -345,8 +390,9 @@ Open **WiFi setup** at the bottom of the Control tab.
 1. Press **Scan networks** and wait a few seconds.
 2. Tap your network in the list. A padlock means it needs a password.
 3. Type the password and press **Join**.
-4. Watch the status line at the top. It changes to `station` with an address once the box
-   has joined, and an **Address** line appears showing `http://slow-arc.local`.
+4. Watch the status strip at the top. Once the box has joined, it reads *WiFi: connected
+   to* your network with an address, and an **Address** line appears showing
+   `http://slow-arc.local`.
 
 Your phone drops off the `SlowArc-Setup` network about a minute after the join succeeds.
 Rejoin the gallery WiFi and go to `http://slow-arc.local` — no need to have noted the
@@ -362,6 +408,10 @@ settings from a phone.
 ---
 
 ## 11. If something looks wrong
+
+**Every arc is dark and still, and the light is blinking blue.** Nothing is wrong: the
+box is in Performance, waiting for the piece to start (§3). Press Play or the sequence
+button to start it, or switch to Gallery to bring the arcs back to their usual settings.
 
 **An arc is dark or not turning.** Check its on/off button on the Control tab — it may
 have been switched off. Then check its sliders aren't at 0. Then check the status light
@@ -383,10 +433,14 @@ Count the flashes (§5) and note the `FAULT` number on the web page. Both say th
 thing. Report the number.
 
 **Everything is dark after a power cut.** Give it a minute. The bulbs fade up slowly and
-deliberately on every start.
+deliberately on every start. If the light then blinks blue, the box was left in
+Performance and stays dark until the piece is started (see above).
 
 **The sequence won't start.** Check the mode is Performance — the sequence button does
 nothing in Gallery mode. **Play** on the page works from either mode.
+
+**"Delete failed: that is the active sequence".** The box always keeps the sequence the
+button plays. Choose another one under *Active sequence*, then delete it.
 
 **The mode switch seems to do nothing, or the light has a white blip.** The page has set
 the mode since the switch was last moved. The switch takes over again as soon as it is
@@ -404,7 +458,7 @@ Sequences tab and choose it under *Active sequence*, then press Play or the sequ
 | Setup network | `SlowArc-Setup` / `slowarc123` |
 | Page address on that network | `http://192.168.4.1` |
 | Page address on gallery WiFi | `http://slow-arc.local` (or the number on the status line) |
-| Healthy light | slow green pulse (Gallery), blue blinking (Performance, waiting), slow blue pulse (sequence playing) |
+| Healthy light | slow green pulse (Gallery), blue blinking (Performance, waiting, arcs dark), slow blue pulse (sequence playing) |
 | Red 2 / 3 / 4 flashes | bulb / motor / power |
 | White blip every 2 s | web page has overridden the mode switch |
 | Settings saved automatically | yes — brightness, speed, mode, sequences (the music track is kept by the laptop's browser) |

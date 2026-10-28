@@ -91,6 +91,7 @@ static bool staged_ = false;
 static std::atomic<int8_t> webMode_{-1};    // (int8_t)Mode
 static std::atomic<int8_t> webRun_{-1};     // 0 = stop, 1 = play
 static std::atomic<int8_t> webSeqSlot_{-1}; // stored slot to hand to the engine
+static_assert(SEQ_SLOTS <= 127, "webSeqSlot_ carries a slot in an int8_t");
 static std::atomic<int32_t> webNudgeMs_{0}; // summed audio-follow nudges, 0 = none
 static std::atomic<int8_t> webLoop_{-1};    // 0 = stop after this pass, 1 = loop
 

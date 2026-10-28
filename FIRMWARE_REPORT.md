@@ -83,7 +83,7 @@ sees every subsystem, so it assembles the web status snapshot and the status‑L
 | [MotorController](src/MotorController.cpp) | 6 steppers via **MCPWM**; software accel ramp; owns EN/safe‑state |
 | [InputManager](src/InputManager.cpp) | Mode switch + sequence button (Bounce2, 25 ms) |
 | [SequenceEngine](src/SequenceEngine.cpp) | Performance‑mode choreography: plays a list of steps (each with its own ramp), frame by frame ([SeqFrame.h](src/SeqFrame.h)) |
-| [SequenceStore](src/SequenceStore.cpp) | 8 sequence slots as LittleFS files + the active slot in NVS; migrates old NVS sequences, seeds the built‑in piece on first boot |
+| [SequenceStore](src/SequenceStore.cpp) | 32 sequence slots as LittleFS files + the active slot in NVS; migrates old NVS sequences, seeds the built‑in piece on first boot |
 | [StatusLed](src/StatusLed.cpp) | Two WS2812s, **bit‑bang** driver, state → colour/animation |
 | [NetworkSupervisor](src/NetworkSupervisor.cpp) | Non‑blocking WiFi: NVS credentials, STA/SoftAP, captive portal |
 | [OtaService](src/OtaService.cpp) | ArduinoOTA, with a safe‑state callback before flashing |
@@ -102,6 +102,12 @@ fully web‑driven. Boot restores the saved mode, stopped — nothing auto‑pla
 - **Gallery** — every arc holds its static set‑point.
 - **Performance** — the sequence engine drives the arcs; the button or `POST /api/run`
   plays/stops (Play implies Performance and is a no‑op while running).
+- **Staging** — entering Performance (a switch flip, `POST /api/mode`, or booting with
+  Performance saved) sets `staged_`, which holds every arc at 0 brightness / 0 Hz until
+  the first running tick clears it, whichever of the button or the web started it. The piece
+  therefore opens from darkness. `/api/state` reports `"staged"`. It is independent of
+  `SEQUENCE_STOP_HOLD`: Stop after a run still holds (or hands back) as configured. Re‑staging
+  means leaving Performance and coming back.
 
 Web commands are posted to atomics by the async web task and applied in `loop()`, which
 alone touches the engine. When the switch position ≠ `model.mode`, `/api/state` reports
@@ -142,7 +148,7 @@ an off/on cycle.
 |-------|-----------|
 | Boot / soft‑start | solid amber |
 | Gallery healthy | slow green pulse |
-| Performance armed | fast blue **blink** (150 ms on / 350 ms off) |
+| Performance armed (staged or stopped) | fast blue **blink** (150 ms on / 350 ms off) |
 | Performance running | slow blue pulse |
 | WiFi connecting | amber pulse |
 | OTA in progress | fast blue pulse |
@@ -198,9 +204,13 @@ Frame values are **scales of the stored set‑points** (255 = the set‑point, 0
 choreography decides only *when* each arc moves; how bright/fast it goes stays with the
 per‑channel commissioning, and re‑commissioning retunes the piece automatically.
 
-`SequenceStore` keeps `SEQ_SLOTS = 8` slots as files (`/seq/<slot>.bin`, a header plus the
+`SequenceStore` keeps `SEQ_SLOTS = 32` slots as files (`/seq/<slot>.bin`, a header plus the
 raw steps) on the stock table's otherwise unused 1.5 MB `spiffs` partition, and the active
-index in NVS — eight 8 KB sequences don't fit the 20 KB NVS partition. Saves go to a temp
+index in NVS — 8 KB sequences don't fit the 20 KB NVS partition (32 full ones use ~256 KB
+of the 1.5 MB). `POST /api/seq/delete` removes a slot's file; the active slot is refused
+(409), so the button always has a piece, and a deleted piece still playing runs on from the
+engine's RAM copy. Deleted slots are reused by the next new name. Firmware with fewer slots
+(e.g. a rollback) ignores slots beyond its own count but leaves their files alone. Saves go to a temp
 file renamed over the slot, so a reader never sees half a sequence. On the first boot of
 this layout it migrates any sequences the older firmware kept as NVS blobs — the old
 shared ramp becomes every step's ramp and the loop closes at `lastT + ramp`, so they play
@@ -214,7 +224,10 @@ the active sequence hands it to the engine — live if stopped, queued for the n
 button push if running.
 
 Stop behaviour is set by `SEQUENCE_STOP_HOLD` (config.h): hold the last produced frame
-(default) or hand back to the static gallery set‑points.
+(default) or hand back to the static gallery set‑points. Before the first start in
+Performance the arcs are staged dark instead (§4). Starting from dark, the frame at t = 0
+is the last step's state unless a step sits at 0, so a piece that should open from black
+either ends all‑off (as "Original" does) or begins with an all‑off step at 0.
 
 ---
 
@@ -224,11 +237,12 @@ Single PROGMEM page, two tabs:
 
 - **Control** — an Override physical controls card (Gallery / Performance, Play / Stop beside the front-panel switch position and last button push, outlined red when overridden),
   per‑arc brightness/speed sliders, a typed Hz box per arc, per‑arc on/off
-  buttons, live status (mode, active sequence, running, WiFi, IP, fault, uptime), a
+  buttons, live status (mode, active sequence, running / stopped / staged, WiFi, IP, fault, uptime), a
   Performance box grouping the running sequence's timeline with the audio player (and a
   banner when track and loop lengths differ), and the WiFi provisioning card. Stopping a
   running sequence from the page asks for confirmation first.
-- **Sequences** — list/select stored sequences, preview, and create/save a new one.
+- **Sequences** — select the active sequence, a stored list (slots used, Edit / Delete per
+  piece, Delete confirmed and refused for the active one), preview, and create/save.
 
 **Layout** — the six arcs are sized to fit the viewport, not to be scrolled: the full rack
 needs ~676 px and a compact variant below 680 px needs ~390 px, so there is no width where
@@ -259,6 +273,7 @@ as queued rather than silently leaving the timeline apparently unchanged.
 | `GET /api/seqs` | list stored sequences + the active slot |
 | `GET /api/seq?i=N` | one stored sequence definition |
 | `POST /api/seq/select` | make slot N active |
+| `POST /api/seq/delete` | delete slot N (409 for the active one) |
 | `POST /api/seq/loop` | `?on=0\|1`: loop the piece (1, boot default) or stop at the end of the pass in progress (0); runtime only, reported as `seq_loop` |
 | `POST /api/seq/nudge` | `?ms=N&run=R`: shift the running sequence's clock by N ms (±5000), ignored unless R is the current run — the audio card's lights‑follow |
 | `POST /api/seq/save` | save a sequence: `name`, `loop_ms` in the query; `t_ms:mask:ramp_ms,…` in a text/plain body (≤ 24 KB) |
@@ -339,7 +354,7 @@ The board went through a multi‑stage boot‑loop diagnosis; all fixed:
 ## 9. Known limits & TODO
 
 - **No spare MCPWM timer** — all 6 are used; a 7th independent motor would need another approach.
-- **Sequence files carry a magic number** (`SEQ3`) and a step count, and are rejected if either is wrong or the file is short — a future layout change reads as absent rather than corrupting. 8 slots × 1000 steps.
+- **Sequence files carry a magic number** (`SEQ3`) and a step count, and are rejected if either is wrong or the file is short — a future layout change reads as absent rather than corrupting. 32 slots × 1000 steps.
 - **Kill switches don't persist** — deliberate: a box power‑cycled after hours comes back with every arc live.
 - **DAC false‑ACK** — the GP8403 library bit‑bangs I²C and can read a false ACK on a floating bus; the `test_dac` env scans the bus first to catch missing boards.
 - **Supply** — the spec warns of inrush sag on the shared bulb rail; add bulk capacitance if brownout faults appear.

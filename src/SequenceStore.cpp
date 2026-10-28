@@ -60,6 +60,9 @@ struct LegacySeqDef {
 };
 static_assert(sizeof(LegacySeqDef) == 288, "must match the old NVS blob size");
 
+// That firmware had 8 slots (keys s0..s7), whatever SEQ_SLOTS is now.
+const uint8_t kLegacySlots = 8;
+
 void keyFor(uint8_t slot, char out[4]) { snprintf(out, 4, "s%u", slot); }
 
 uint16_t rampToDs(uint32_t ms) {
@@ -147,7 +150,7 @@ void SequenceStore::begin() {
     LegacySeqDef old;
     char k[4];
     uint8_t migrated = 0;
-    for (uint8_t i = 0; d && i < SEQ_SLOTS; ++i) {
+    for (uint8_t i = 0; d && i < kLegacySlots && i < SEQ_SLOTS; ++i) {
       keyFor(i, k);
       if (!p.isKey(k)) continue;
       // Size mismatch (a still older layout) reads as absent, as it always did.
@@ -268,6 +271,13 @@ bool SequenceStore::save(uint8_t slot, const SeqDef& def) {
   if (ok) ok = LittleFS.rename(tmp, dst);
   if (!ok) LittleFS.remove(tmp);
   return ok;
+}
+
+bool SequenceStore::erase(uint8_t slot) {
+  if (!mounted_ || slot >= SEQ_SLOTS) return false;
+  char p[16];
+  pathFor(slot, p);
+  return LittleFS.exists(p) && LittleFS.remove(p);
 }
 
 int SequenceStore::saveByName(const SeqDef& def) {

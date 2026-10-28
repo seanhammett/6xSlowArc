@@ -22,7 +22,7 @@
   const N = 6;
   const MOTOR_MIN_SPEED_HZ = 60;
   const MOTOR_MAX_SPEED_HZ = 8000;
-  const SEQ_SLOTS = 8;
+  const SEQ_SLOTS = 32;
   const SEQ_MAX_STEPS = 1000;
 
   // --- The simulated box -----------------------------------------------------
@@ -68,8 +68,7 @@
       { t: 20,  m: 0b100001 }, { t: 60,  m: 0b110011 }, { t: 100, m: 0b111111 },
       { t: 140, m: 0b011110 }, { t: 180, m: 0b001100 }, { t: 220, m: 0b000000 },
     ] },
-    null, null, null, null, null,
-  ];
+  ].concat(Array(SEQ_SLOTS - 3).fill(null));
 
   // Literals above are in seconds with one ramp each, for readability; the box
   // keeps ms, a ramp per step, and the loop length (here last step + ramp).
@@ -106,6 +105,7 @@
     eng.runId++;
     eng.pass = 0;
     eng.running = true;
+    eng.staged = false;
     eng.startAt = Date.now();
   }
   function engPosMs() {
@@ -134,6 +134,7 @@
       switch: dev.switchPos,
       btn_ago: dev.lastPress ? Math.floor((Date.now() - dev.lastPress) / 1000) : -1,
       running: eng.running,
+      staged: !!eng.staged,
       seq_t: engPosMs(),
       seq_len: eng.len,
       run_id: eng.runId,
@@ -171,6 +172,7 @@
 
     'GET /api/seqs': () => json({
       active: activeSlot,
+      slots: SEQ_SLOTS,
       seqs: seqs.map((s, i) => s && { i, name: s.name }).filter(Boolean),
     }),
 
@@ -185,6 +187,15 @@
       if (!(i >= 0 && i < SEQ_SLOTS) || !seqs[i]) return text('no such sequence', 404);
       activeSlot = i;
       engApply(seqs[i]);
+      return json({ ok: true });
+    },
+
+    // The active sequence is refused; a deleted piece still playing carries on.
+    'POST /api/seq/delete': q => {
+      const i = parseInt(q.get('i'), 10);
+      if (!(i >= 0 && i < SEQ_SLOTS) || !seqs[i]) return text('no such sequence', 404);
+      if (i === activeSlot) return text('that is the active sequence; select another one first', 409);
+      seqs[i] = null;
       return json({ ok: true });
     },
 
@@ -224,7 +235,7 @@
       // saveByName: same name overwrites, otherwise the first free slot.
       let slot = seqs.findIndex(s => s && s.name === name);
       if (slot < 0) slot = seqs.findIndex(s => !s);
-      if (slot < 0) return text('sequence slots full (or storage write failed)', 507);
+      if (slot < 0) return text('every slot is in use; delete a sequence first (or storage write failed)', 507);
       seqs[slot] = def;
       if (slot === activeSlot) engApply(def);
       return json({ ok: true, slot });
@@ -248,6 +259,8 @@
       const m = q.get('m');
       if (m !== 'Gallery' && m !== 'Performance')
         return text('m must be Gallery or Performance', 400);
+      // Entering Performance stages the arcs dark until the piece starts (main.cpp).
+      if (m !== dev.mode) eng.staged = m === 'Performance';
       dev.mode = m;
       if (m === 'Gallery') eng.running = false;
       syncPanel();
@@ -435,10 +448,12 @@
       if (dev.switchPos === 'Gallery') return;
       dev.switchPos = dev.mode = 'Gallery';
       eng.running = false;            // main.cpp stops the engine leaving Performance
+      eng.staged = false;
       syncPanel();
     });
     on('#mkPerf', () => {
       if (dev.switchPos === 'Performance') return;
+      if (dev.mode !== 'Performance') eng.staged = true;
       dev.switchPos = dev.mode = 'Performance';
       syncPanel();
     });
@@ -453,6 +468,7 @@
       seqs = FRESH_SEQS().map(toMs);
       activeSlot = 0;
       eng.running = false;
+      eng.staged = false;
       eng.queued = null;
       engApply(seqs[0]);
       scanStartedAt = 0;

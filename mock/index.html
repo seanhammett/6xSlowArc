@@ -118,7 +118,12 @@
   input[type=number]{background:#15171c;border:1px solid #444;border-radius:6px;color:#e8e8e8;padding:.25rem .4rem;width:4.5rem}
   .step{display:flex;gap:.4rem;align-items:center;margin:.25rem 0;font-size:.85rem;flex-wrap:wrap}
   .step label{display:flex;align-items:center;gap:.15rem;color:#bbb}
-  #pvname,#selmsg,#edmsg,#edlen,#edmore{font-size:.85rem;color:#bbb}
+  #pvname,#selmsg,#edmsg,#edlen,#edmore,#slotsmsg{font-size:.85rem;color:#bbb}
+  #seqlist{max-height:16rem;overflow-y:auto;margin-top:.4rem}
+  .srow{display:flex;align-items:center;gap:.5rem;padding:.3rem 0;border-top:1px solid #333a46;font-size:.9rem}
+  .srow:first-child{border-top:0}
+  .srow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .srow small{color:#9ad}
   /* The step list scrolls inside the card; rows are added as it is scrolled. */
   #edwrap{max-height:24rem;overflow-y:auto}
   .step input[type=number]{width:5.5rem}
@@ -238,6 +243,10 @@
  <div class="wrow"><select id="seqsel" onchange="selSeq()"></select><span id="selmsg"></span></div>
 </div>
 <div class="card">
+ <b>Stored sequences</b> <span id="slotsmsg"></span>
+ <div id="seqlist"></div>
+</div>
+<div class="card">
  <b>Preview</b> <span id="pvname"></span>
  <canvas id="pvcv" height="132"></canvas>
 </div>
@@ -291,7 +300,7 @@
   const N = 6;
   const MOTOR_MIN_SPEED_HZ = 60;
   const MOTOR_MAX_SPEED_HZ = 8000;
-  const SEQ_SLOTS = 8;
+  const SEQ_SLOTS = 32;
   const SEQ_MAX_STEPS = 1000;
 
   // --- The simulated box -----------------------------------------------------
@@ -337,8 +346,7 @@
       { t: 20,  m: 0b100001 }, { t: 60,  m: 0b110011 }, { t: 100, m: 0b111111 },
       { t: 140, m: 0b011110 }, { t: 180, m: 0b001100 }, { t: 220, m: 0b000000 },
     ] },
-    null, null, null, null, null,
-  ];
+  ].concat(Array(SEQ_SLOTS - 3).fill(null));
 
   // Literals above are in seconds with one ramp each, for readability; the box
   // keeps ms, a ramp per step, and the loop length (here last step + ramp).
@@ -375,6 +383,7 @@
     eng.runId++;
     eng.pass = 0;
     eng.running = true;
+    eng.staged = false;
     eng.startAt = Date.now();
   }
   function engPosMs() {
@@ -403,6 +412,7 @@
       switch: dev.switchPos,
       btn_ago: dev.lastPress ? Math.floor((Date.now() - dev.lastPress) / 1000) : -1,
       running: eng.running,
+      staged: !!eng.staged,
       seq_t: engPosMs(),
       seq_len: eng.len,
       run_id: eng.runId,
@@ -440,6 +450,7 @@
 
     'GET /api/seqs': () => json({
       active: activeSlot,
+      slots: SEQ_SLOTS,
       seqs: seqs.map((s, i) => s && { i, name: s.name }).filter(Boolean),
     }),
 
@@ -454,6 +465,15 @@
       if (!(i >= 0 && i < SEQ_SLOTS) || !seqs[i]) return text('no such sequence', 404);
       activeSlot = i;
       engApply(seqs[i]);
+      return json({ ok: true });
+    },
+
+    // The active sequence is refused; a deleted piece still playing carries on.
+    'POST /api/seq/delete': q => {
+      const i = parseInt(q.get('i'), 10);
+      if (!(i >= 0 && i < SEQ_SLOTS) || !seqs[i]) return text('no such sequence', 404);
+      if (i === activeSlot) return text('that is the active sequence; select another one first', 409);
+      seqs[i] = null;
       return json({ ok: true });
     },
 
@@ -493,7 +513,7 @@
       // saveByName: same name overwrites, otherwise the first free slot.
       let slot = seqs.findIndex(s => s && s.name === name);
       if (slot < 0) slot = seqs.findIndex(s => !s);
-      if (slot < 0) return text('sequence slots full (or storage write failed)', 507);
+      if (slot < 0) return text('every slot is in use; delete a sequence first (or storage write failed)', 507);
       seqs[slot] = def;
       if (slot === activeSlot) engApply(def);
       return json({ ok: true, slot });
@@ -517,6 +537,8 @@
       const m = q.get('m');
       if (m !== 'Gallery' && m !== 'Performance')
         return text('m must be Gallery or Performance', 400);
+      // Entering Performance stages the arcs dark until the piece starts (main.cpp).
+      if (m !== dev.mode) eng.staged = m === 'Performance';
       dev.mode = m;
       if (m === 'Gallery') eng.running = false;
       syncPanel();
@@ -704,10 +726,12 @@
       if (dev.switchPos === 'Gallery') return;
       dev.switchPos = dev.mode = 'Gallery';
       eng.running = false;            // main.cpp stops the engine leaving Performance
+      eng.staged = false;
       syncPanel();
     });
     on('#mkPerf', () => {
       if (dev.switchPos === 'Performance') return;
+      if (dev.mode !== 'Performance') eng.staged = true;
       dev.switchPos = dev.mode = 'Performance';
       syncPanel();
     });
@@ -722,6 +746,7 @@
       seqs = FRESH_SEQS().map(toMs);
       activeSlot = 0;
       eng.running = false;
+      eng.staged = false;
       eng.queued = null;
       engApply(seqs[0]);
       scanStartedAt = 0;
@@ -924,7 +949,7 @@ function wsave(){
 // seqName is the piece the timeline below IS; seqQueued is one selected while
 // a piece was playing, which by design only takes over at the next press.
 const MAXSTEPS=1000;              // mirror SEQ_MAX_STEPS in config.h
-let seq=null,seqKey=0,tlCache=null,seqT=0,seqAt=0,seqRun=false,seqLive=false,seqName='',seqQueued='';
+let seq=null,seqKey=0,tlCache=null,seqT=0,seqAt=0,seqRun=false,seqStaged=false,seqLive=false,seqName='',seqQueued='';
 let seqLen=0,seqRunId=0,curMode='',seqLoop=true;
 // Loop, or stop at the end of the pass in progress. Optimistic; the poll confirms.
 function paintLoop(){
@@ -1030,7 +1055,8 @@ function drawSeq(){
   }else{
     document.getElementById('loopnote').textContent='';
     document.getElementById('seqinfo').textContent=
-      `— ${nm} · stopped (press the sequence button)${q}`;
+      seqStaged?`— ${nm} · staged: arcs dark until Play or the sequence button${q}`
+               :`— ${nm} · stopped (press the sequence button)${q}`;
     document.getElementById('seqtime').textContent=`loop ${fmt(seq.len)}`;
   }
 }
@@ -1050,6 +1076,13 @@ async function loadSeqList(){
     const d=await (await fetchT('/api/seqs')).json();
     document.getElementById('seqsel').innerHTML=d.seqs.map(s=>
       `<option value="${s.i}"${s.i==d.active?' selected':''}>${esc(s.name)}</option>`).join('');
+    // Stored list: Edit loads any piece without making it active; the active one
+    // can't be deleted (the box refuses too), so there is always one to play.
+    seqNames={};d.seqs.forEach(s=>seqNames[s.i]=s.name);
+    document.getElementById('slotsmsg').textContent=d.slots?`— ${d.seqs.length} of ${d.slots} slots used`:'';
+    document.getElementById('seqlist').innerHTML=d.seqs.map(s=>
+      `<div class="srow"><span class="nm">${esc(s.name)}</span><button onclick="edLoad(${s.i})">Edit</button>`+
+      (s.i==d.active?'<small>active</small>':`<button onclick="delSeq(${s.i})">Delete</button>`)+'</div>').join('');
     loadPreview();
   }catch(e){}
 }
@@ -1061,6 +1094,18 @@ async function loadPreview(){
       `— ${d.name} · ${st.length} steps · loop ${fmt1(d.len)}`;
     drawMask('pvcv',d.len,st);
   }catch(e){}
+}
+let seqNames={};
+async function delSeq(i){
+  const nm=seqNames[i]||'this sequence',m=document.getElementById('slotsmsg');
+  if(!await ask('Delete this sequence?',
+    `“${nm}” will be removed from the box. This can’t be undone. To keep a copy, press Edit, then Export CSV first.`,
+    'Delete'))return;
+  let r;
+  try{r=await fetchT('/api/seq/delete?i='+i,{method:'POST'})}
+  catch(e){m.textContent='— delete failed: no reply from the box';return}
+  if(!r.ok){m.textContent='— delete failed: '+await r.text();return}
+  loadSeqList();
 }
 async function selSeq(){
   await post('/api/seq/select?i='+document.getElementById('seqsel').value);
@@ -1141,8 +1186,8 @@ function edAdd(){
   else edRender(n+1);
   const w=document.getElementById('edwrap');w.scrollTop=w.scrollHeight;
 }
-async function edLoad(){
-  const i=document.getElementById('seqsel').value;
+async function edLoad(slot){
+  const i=slot??document.getElementById('seqsel').value;
   try{
     const d=await (await fetchT('/api/seq?i='+i)).json();
     ed={steps:stepsIn(d.steps)};
@@ -1574,7 +1619,7 @@ async function poll(){
     document.getElementById('status').innerHTML=
       `<div>${hl}</div>`+
       `<div>Mode: <b>${d.mode}</b></div>`+
-      `<div>Sequence: ${nm}${d.running?'running':'stopped'}${q}</div>`+
+      `<div>Sequence: ${nm}${d.running?'running':d.staged?'staged (arcs dark)':'stopped'}${q}</div>`+
       `<div>WiFi: ${wifiLine(d)}</div>`+
       (d.host?`<div>Address: <b><a href="http://${d.host}/">http://${d.host}</a></b></div>`:'')+
       `<div>Uptime: <b>${d.uptime}s</b></div>`+
@@ -1587,7 +1632,7 @@ async function poll(){
     const sc=document.getElementById('seqcard');
     sc.style.display=(d.mode==='Performance')?'':'none';
     // seq_t was sampled mid-request: credit half the round trip.
-    seqRun=d.running;seqT=d.seq_t+(d.running?(t1-t0)/2:0);seqAt=t1;seqRtt=t1-t0;
+    seqRun=d.running;seqStaged=!!d.staged;seqT=d.seq_t+(d.running?(t1-t0)/2:0);seqAt=t1;seqRtt=t1-t0;
     seqLen=d.seq_len||0;seqRunId=d.run_id||0;curMode=d.mode;
     seqLoop=d.seq_loop!==false;paintLoop();
     // Refetch the timeline whenever the loaded piece changes — including when
